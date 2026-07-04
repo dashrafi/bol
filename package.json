@@ -1,0 +1,23 @@
+{
+  "name": "bol",
+  "version": "0.1.0",
+  "description": "Bol — speak anywhere, it types. System-wide AI dictation for Windows (Wispr Flow class): push-to-talk, AI cleanup, tones, dictionary, snippets, command mode, local/offline mode.",
+  "main": "src/main/index.js",
+  "author": "Danish",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "node test/unit.js"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.4"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.5.2"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0"
+  }
+}
