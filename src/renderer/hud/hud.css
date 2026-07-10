@@ -1,0 +1,239 @@
+/* Bol HUD — dark glass pill. Window is transparent + frameless; body stays transparent. */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* ---------- pill ---------- */
+
+.pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  width: 240px;
+  max-width: 520px;
+  padding: 0 20px;
+  background: rgba(15, 18, 28, 0.92);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.pill[data-state="listening"]     { width: 520px; }
+.pill[data-state="transcribing"],
+.pill[data-state="polishing"]     { width: 236px; }
+.pill[data-state="inserting"]     { width: 184px; }
+.pill[data-state="error"]         { width: 420px; }
+
+.pill[data-state="inserting"] {
+  border-color: rgba(52, 211, 153, 0.35);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45), 0 0 26px rgba(52, 211, 153, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.pill[data-state="error"] {
+  border-color: rgba(255, 99, 110, 0.32);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45), 0 0 24px rgba(255, 99, 110, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.pill.hidden {
+  opacity: 0;
+  transform: scale(0.94);
+  pointer-events: none;
+}
+
+.pill.snap, .pill.snap * { transition: none !important; }
+
+@keyframes hud-enter {
+  from { opacity: 0; transform: scale(0.9) translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.pill.enter { animation: hud-enter 0.15s ease-out; }
+
+/* ---------- status cluster (fixed box: no shift when icons swap) ---------- */
+
+.status {
+  position: relative;
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.ic {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.5);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+/* red pulsing dot — listening */
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff4d5e;
+}
+.pill[data-state="listening"] .dot {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  animation: dot-pulse 1.5s ease-out infinite;
+}
+@keyframes dot-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.55); }
+  70%  { box-shadow: 0 0 0 9px rgba(255, 77, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0); }
+}
+
+/* three-dot spinner — transcribing / polishing (and any busy fallback) */
+.dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+.dots i {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8b96ff;
+}
+.pill[data-state="transcribing"] .dots,
+.pill[data-state="polishing"] .dots,
+.pill:not([data-state="listening"]):not([data-state="inserting"]):not([data-state="error"]):not([data-state="idle"]) .dots {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.pill[data-state="transcribing"] .dots i,
+.pill[data-state="polishing"] .dots i,
+.pill:not([data-state="listening"]):not([data-state="inserting"]):not([data-state="error"]):not([data-state="idle"]) .dots i {
+  animation: dot-hop 1s ease-in-out infinite;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s !important; }
+.dots i:nth-child(3) { animation-delay: 0.3s !important; }
+@keyframes dot-hop {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+
+/* green check — inserting */
+.check { color: #34d399; }
+.pill[data-state="inserting"] .check {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  animation: check-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes check-pop {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  70%  { opacity: 1; transform: translate(-50%, -50%) scale(1.18); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* error icon */
+.erricon { color: #ff6b78; }
+.pill[data-state="error"] .erricon {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* ---------- waveform (listening only) ---------- */
+
+.wave {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 28px;
+}
+.pill[data-state="listening"] .wave { display: flex; }
+
+.wave i {
+  display: block;
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #9aa4ff, #6c7bff);
+  transform: scaleY(0.12);
+  will-change: transform;
+}
+.wave.settle i { transition: transform 0.25s ease; }
+
+/* ---------- live transcript (listening only) ---------- */
+
+.text-wrap {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  line-height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 15px;
+  color: #e8ecf8;
+}
+.pill[data-state="listening"] .text-wrap { display: block; }
+
+.text-wrap.fade {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 34px);
+  mask-image: linear-gradient(90deg, transparent 0, #000 34px);
+}
+
+.text {
+  display: inline-block;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+.text.placeholder { color: #7d879f; }
+
+/* ---------- status label (every non-listening state) ---------- */
+
+.label {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #c9d1e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding-right: 24px; /* visually balance the status cluster */
+}
+.pill:not([data-state="listening"]) .label { display: block; }
+
+.pill[data-state="inserting"] .label { color: #86efac; }
+.pill[data-state="error"] .label { color: #ffb4bb; text-align: left; padding-right: 0; }

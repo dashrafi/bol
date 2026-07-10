@@ -30,7 +30,7 @@ Toggle hotkey = same, start/stop on alternate presses. Command hotkey = same cap
 
 ```js
 {
-  hotkeys: { pushToTalk: { code: 3585, label: 'F9' }, toggle: { code: 3586, label: 'F10' }, command: { code: 3583, label: 'F8' } }, // uiohook keycodes
+  hotkeys: { pushToTalk: { code: 67, label: 'F9' }, toggle: { code: 68, label: 'F10' }, command: { code: 66, label: 'F8' } }, // uiohook-napi UiohookKey codes (verified on this machine)
   stt: { provider: 'deepgram', // 'deepgram' | 'openai' | 'local'
          deepgramKey: '', deepgramModel: 'nova-2',
          openaiKey: '', openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'whisper-1',

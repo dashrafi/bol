@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:;">
+  <title>Bol</title>
+  <link rel="stylesheet" href="hud.css">
+</head>
+<body>
+  <div id="pill" class="pill hidden" data-state="idle">
+    <div class="status">
+      <span class="ic dot"></span>
+      <span class="ic dots"><i></i><i></i><i></i></span>
+      <svg class="ic check" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M4.5 12.5l5 5 10-11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <svg class="ic erricon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 7.2v5.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <circle cx="12" cy="16.6" r="1.35" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+    <div class="wave" id="wave"></div>
+    <div class="text-wrap" id="textWrap"><span class="text" id="text"></span></div>
+    <div class="label" id="label"></div>
+  </div>
+  <script src="hud.js"></script>
+</body>
+</html>
