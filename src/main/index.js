@@ -61,14 +61,31 @@ function positionHud() {
 }
 
 // ---------- pipeline ----------
+let pendingStop = false;      // a keyup arrived during startCapture's await, before `current` existed
+let startingTrigger = null;   // which trigger's capture is mid-startup (for owner-matched pendingStop)
+
 async function startCapture(mode, via) {
   if (!enabled || state !== S.IDLE) return;
   const cfg = effectiveConfig();
+  const trigger = via === 'toggle' ? 'toggle' : (mode === 'command' ? 'command' : 'ptt');
   state = S.LISTENING;
+  pendingStop = false;
+  startingTrigger = trigger;
   tray.setState('listening');
 
   let target = { exe: '', title: '' };
   try { target = await injector.getActiveWindow(); } catch (e) { log('activeWindow failed', e.message); }
+  startingTrigger = null;
+
+  // The user may have released PTT (or cancelled) during the await above, when
+  // `current` was still null so stopCapture couldn't act. Honor that now: never
+  // start the mic for a capture that was already released, or we'd be stuck
+  // LISTENING with a session nothing ever ends.
+  if (pendingStop || state !== S.LISTENING) {
+    pendingStop = false;
+    if (state === S.LISTENING) { state = S.IDLE; tray.setState(enabled ? 'idle' : 'disabled'); hudSend({ state: 'idle' }); }
+    return;
+  }
 
   const dict = store.dictionary.list().map(d => d.word);
   let sess;
@@ -80,13 +97,20 @@ async function startCapture(mode, via) {
     });
   } catch (e) { return onPipelineError(null, e); }
 
-  current = { session: sess, mode, via, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0 };
+  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0 };
   hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
   recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
 }
 
-function stopCapture() {
-  if (state !== S.LISTENING || !current) return;
+function stopCapture(owner) {
+  if (state !== S.LISTENING) return;
+  if (!current) {
+    // keyup landed before startCapture assigned `current` — record intent so the
+    // resuming startCapture cancels instead of starting a mic nothing stops.
+    if (!owner || owner === startingTrigger) pendingStop = true;
+    return;
+  }
+  if (owner && current.trigger !== owner) return; // stray keyup from a different trigger
   state = S.FINALIZING;
   tray.setState('busy');
   recorderSend('rec:stop');
@@ -98,7 +122,9 @@ function stopCapture() {
 }
 
 function cancelCapture() {
-  if (!current) return;
+  pendingStop = false;
+  startingTrigger = null;
+  if (!current) { if (state === S.LISTENING) { state = S.IDLE; tray.setState(enabled ? 'idle' : 'disabled'); hudSend({ state: 'idle' }); } return; }
   try { current.session.abort(); } catch {}
   recorderSend('rec:stop');
   current = null;
@@ -297,10 +323,10 @@ if (!gotLock) { app.quit(); } else {
     try {
       hotkeys.init({
         onPTTDown: () => startCapture('dictate', 'ptt'),
-        onPTTUp: () => stopCapture(),
-        onToggle: () => { (state === S.IDLE) ? startCapture('dictate', 'toggle') : (state === S.LISTENING && current && current.via === 'toggle' && stopCapture()); },
+        onPTTUp: () => stopCapture('ptt'),
+        onToggle: () => { (state === S.IDLE) ? startCapture('dictate', 'toggle') : (state === S.LISTENING && current && current.via === 'toggle' && stopCapture('toggle')); },
         onCommandDown: () => startCapture('command', 'ptt'),
-        onCommandUp: () => stopCapture(),
+        onCommandUp: () => stopCapture('command'),
       }, config.get().hotkeys);
       bootReport.hotkeys = hotkeys.mode;
     } catch (e) { bootReport.hotkeys = 'failed: ' + e.message; console.error('[bol] hotkeys init failed', e); }

@@ -34,6 +34,15 @@ t('keeps roman urdu words that are not fillers', () => {
 t('empty in, empty out', () => {
   assert.strictEqual(cleanup.localCleanup('   '), '');
 });
+t('strips a hedge filler that follows a stripped hesitation filler', () => {
+  const out = cleanup.localCleanup('um, you know, we should ship it');
+  assert(!/you know/i.test(out), out);
+  assert(/we should ship it/i.test(out), out);
+});
+t('pure-noise / punctuation-only input returns empty', () => {
+  assert.strictEqual(cleanup.localCleanup('... , .'), '');
+  assert.strictEqual(cleanup.localCleanup('um uh'), '');
+});
 
 console.log('wav.pcm16ToWav');
 const wav = require('../src/main/stt/wav');

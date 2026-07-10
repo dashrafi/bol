@@ -6,8 +6,11 @@ const { spawn } = require('child_process');
 
 let child = null;
 let helperPath = null;
-let respawns = 0;
+let respawns = 0;              // consecutive crashes; reset once a helper proves stable
 const MAX_RESPAWNS = 3;
+const STABLE_MS = 30000;       // a helper alive this long clears the crash budget
+let stableTimer = null;
+let stopped = false;           // set by stop(): never respawn again
 let nextId = 1;
 const pending = new Map(); // id -> {resolve, reject, timer}
 let ready = false;
@@ -22,6 +25,8 @@ function asciiJson(obj) {
 }
 
 function spawnHelper() {
+  if (stopped) return;
+  buf = ''; // (#5) never carry a partial line from a crashed generation into the new one's beacon
   child = spawn('powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath],
     { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
@@ -29,6 +34,11 @@ function spawnHelper() {
   child.stdout.on('data', onData);
   child.on('exit', onExit);
   child.on('error', () => { /* surfaced via pending-request timeouts */ });
+  // (#6) if this generation survives, treat earlier crashes as transient — so 3
+  // crashes spread over hours don't permanently disable injection, while a tight
+  // crash-loop (3 within STABLE_MS) still trips MAX_RESPAWNS and gives up.
+  if (stableTimer) clearTimeout(stableTimer);
+  stableTimer = setTimeout(() => { respawns = 0; stableTimer = null; }, STABLE_MS);
 }
 
 function onData(chunk) {
@@ -57,10 +67,18 @@ function onData(chunk) {
 function onExit() {
   child = null;
   ready = false;
+  if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
   const err = new Error('injection helper exited');
-  for (const [, p] of pending) { clearTimeout(p.timer); p.reject(err); }
+  const ps = Array.from(pending.values());
   pending.clear();
-  if (respawns < MAX_RESPAWNS) { respawns++; spawnHelper(); }
+  for (const p of ps) { try { clearTimeout(p.timer); } catch {} try { p.reject(err); } catch {} }
+  if (!stopped && respawns < MAX_RESPAWNS) { respawns++; spawnHelper(); }
+  else {
+    // Gave up (or stopping): unblock anyone awaiting readiness so their request
+    // rejects (via !child) instead of hanging until its own timeout.
+    const waiters = readyWaiters.splice(0);
+    for (const fn of waiters) { try { fn(); } catch {} }
+  }
 }
 
 function whenReady() {
@@ -69,22 +87,33 @@ function whenReady() {
 }
 
 function request(cmd, args, timeoutMs) {
-  return whenReady().then(() => new Promise((resolve, reject) => {
-    if (!child) return reject(new Error('helper not running'));
-    const id = nextId++;
-    const timer = setTimeout(() => {
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    // One timer covers BOTH the readiness wait AND the round-trip, so a helper
+    // that never becomes ready can't hang the caller forever (#4).
+    const done = (fn, v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       pending.delete(id);
-      reject(new Error(cmd + ' timed out'));
-    }, timeoutMs || 5000);
-    pending.set(id, { resolve, reject, timer });
-    try { child.stdin.write(asciiJson({ id, cmd, args: args || {} }) + '\n'); }
-    catch (e) { clearTimeout(timer); pending.delete(id); reject(e); }
-  }));
+      fn(v);
+    };
+    const timer = setTimeout(() => done(reject, new Error(cmd + ' timed out')), timeoutMs || 5000);
+    whenReady().then(() => {
+      if (settled) return;
+      if (!child) return done(reject, new Error('helper not running'));
+      pending.set(id, { timer, resolve: (v) => done(resolve, v), reject: (e) => done(reject, e) });
+      try { child.stdin.write(asciiJson({ id, cmd, args: args || {} }) + '\n'); }
+      catch (e) { done(reject, e); }
+    });
+  });
 }
 
 function init(p) {
   helperPath = p;
   respawns = 0;
+  stopped = false;
   spawnHelper();
 }
 
@@ -115,8 +144,10 @@ function copySelection() {
 }
 
 function stop() {
-  respawns = MAX_RESPAWNS; // block auto-respawn on intentional stop
-  if (child) { try { child.stdin.end(); } catch {} try { child.kill(); } catch {} child = null; }
+  stopped = true; // block auto-respawn on intentional stop
+  if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+  if (child) { try { child.stdin.end(); } catch {} try { child.kill(); } catch {} }
+  // child 'exit' -> onExit rejects any in-flight requests and unblocks readiness waiters.
 }
 
 module.exports = { init, paste, typeText, getActiveWindow, copySelection, stop };

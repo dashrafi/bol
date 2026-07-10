@@ -64,6 +64,10 @@ function localCleanup(raw) {
     t = t.replace(/,\s*(?:you know|i mean|like|matlab|yani)\s*([.!?])/gi, '$1');
     if (t === before) break;
   }
+  // Removing a leading hesitation filler ("um, you know, …") leaves whitespace
+  // before the hedge, so the sentence-start anchor below wouldn't fire. Re-flush
+  // leading whitespace so "you know," at the true start is caught, not leaked.
+  t = t.replace(/^\s+/, '');
   // Same fillers leading a sentence with a trailing comma: "Matlab, ..."
   t = t.replace(/(^|[.!?]\s+|\n)(?:you know|i mean|like|matlab|yani|so basically|basically)\s*,\s*/gi, '$1');
   // "basically" lead-ins without a comma at sentence start.
@@ -96,6 +100,9 @@ function localCleanup(raw) {
 
   t = t.trim();
   if (!t) return '';
+  // Pure-noise input can reduce to punctuation-only residue ("." / "-"); insert
+  // nothing rather than stray characters (mirrors the AI path's empty sentinel).
+  if (!/[\p{L}\p{N}]/u.test(t)) return '';
 
   // Ensure terminal punctuation. Trailing "," / ";" / ":" becomes "."; text
   // already ending in .!?… (optionally inside a closing quote) is left alone.

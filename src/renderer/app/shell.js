@@ -57,8 +57,10 @@
   function applyGate() {
     var onboarding = !cfg || !cfg.ui || !cfg.ui.onboarded;
     document.body.classList.toggle('onboarding', onboarding);
-    if (onboarding) { show('onboarding'); }
-    else if (current === 'onboarding') { show('dashboard'); }
+    // Only navigate on an actual gate transition — re-showing 'onboarding' while
+    // already there would rebuild the wizard DOM and drop the focused input.
+    if (onboarding && current !== 'onboarding') { show('onboarding'); }
+    else if (!onboarding && current === 'onboarding') { show('dashboard'); }
   }
 
   // ------------------------------------------------------------ boot
@@ -89,16 +91,16 @@
 
     if (window.bol && typeof window.bol.on === 'function') {
       window.bol.on('settings:changed', function (c) {
+        var wasOnb = !cfg || !cfg.ui || !cfg.ui.onboarded;
         cfg = c;
         window.bolConfig = c;
-        var wasOnboarding = document.body.classList.contains('onboarding');
-        applyGate();
-        // Refresh the open page so it reflects new settings — BUT never rebuild the
-        // settings or onboarding editors here: they own their own edits and drive
-        // their own re-renders, so rebuilding on the settings:changed THEY emit would
-        // destroy the input being typed into (focus/cursor loss on every keystroke).
-        if (!wasOnboarding && !document.body.classList.contains('onboarding')
-            && current !== 'settings' && current !== 'onboarding') render(current);
+        var nowOnb = !cfg || !cfg.ui || !cfg.ui.onboarded;
+        // Re-gate ONLY when the onboarded flag actually flipped. Otherwise never
+        // rebuild the settings/onboarding editors from the settings:changed THEY
+        // emit on each keystroke (would destroy the focused input). Passive pages
+        // (dashboard/history/…) do refresh to reflect external changes.
+        if (wasOnb !== nowOnb) applyGate();
+        else if (!nowOnb && current !== 'settings' && current !== 'onboarding') render(current);
       });
     }
   }
