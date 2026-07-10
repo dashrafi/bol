@@ -93,8 +93,12 @@
         window.bolConfig = c;
         var wasOnboarding = document.body.classList.contains('onboarding');
         applyGate();
-        // If not a gate transition, refresh whatever page is open so it reflects new settings.
-        if (!wasOnboarding && !document.body.classList.contains('onboarding')) render(current);
+        // Refresh the open page so it reflects new settings — BUT never rebuild the
+        // settings or onboarding editors here: they own their own edits and drive
+        // their own re-renders, so rebuilding on the settings:changed THEY emit would
+        // destroy the input being typed into (focus/cursor loss on every keystroke).
+        if (!wasOnboarding && !document.body.classList.contains('onboarding')
+            && current !== 'settings' && current !== 'onboarding') render(current);
       });
     }
   }

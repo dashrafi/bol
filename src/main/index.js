@@ -217,13 +217,14 @@ let micPending = null;
 function registerIpc() {
   ipcMain.handle('settings:get', () => config.get());
   ipcMain.handle('settings:set', (e, patch) => {
-    config.set(patch);
+    config.set(patch); // fires config.onChange -> broadcast('settings:changed') once
     const cfg = config.get();
     if (patch && patch.hotkeys) hotkeys.update(cfg.hotkeys);
     if (patch && patch.ui && typeof patch.ui.launchAtLogin === 'boolean') {
       try { app.setLoginItemSettings({ openAtLogin: cfg.ui.launchAtLogin }); } catch {}
     }
-    broadcast('settings:changed', cfg);
+    // NOTE: no explicit broadcast here — config.onChange (wired in boot) already
+    // emits settings:changed on set(), so broadcasting again would double-fire it.
     return cfg;
   });
   ipcMain.handle('settings:captureHotkey', async () => hotkeys.captureNext());
