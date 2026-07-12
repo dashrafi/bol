@@ -108,13 +108,13 @@
     if (step === 0) {
       body.appendChild(h('div', { class: 'onb-mark', html: MIC_SVG }));
       body.appendChild(h('h1', { text: 'Welcome to Bol' }));
-      body.appendChild(h('p', { text: 'Speak anywhere on Windows and Bol types polished text into whatever app has focus — email, Slack, your editor, the browser. Bring your own API keys; there is no subscription and nothing is sent to us.' }));
-      body.appendChild(h('p', { text: "Let's get you set up in three quick steps." }));
+      body.appendChild(h('p', { text: 'Speak anywhere on Windows and Bol types polished text into whatever app has focus — email, Slack, your editor, the browser. Free by default, no subscription, no account, nothing sent to any server.' }));
+      body.appendChild(h('p', { text: "It works out of the box with $0 keys — local voice recognition on your PC. Let's set it up in three quick steps." }));
     } else if (step === 1) {
       body.appendChild(h('h1', { text: 'Choose your voice engine' }));
-      body.appendChild(h('p', { text: 'Deepgram gives the fastest, live-streaming feel. You can switch to fully offline Local Whisper any time in Settings.' }));
+      body.appendChild(h('p', { text: 'Local Whisper runs on your PC — free, no key, works offline (recommended). Prefer a faster cloud? Groq has a free tier. You can switch any time in Settings.' }));
       var prov = h('select', { class: 'onb-sel' });
-      [['deepgram', 'Deepgram (cloud, fastest)'], ['openai', 'OpenAI / Groq Whisper (cloud)'], ['local', 'Local Whisper (offline, free)']].forEach(function (o) {
+      [['local', 'Local Whisper — free, no key, offline (recommended)'], ['openai', 'Groq / OpenAI Whisper — free tier, needs a key'], ['deepgram', 'Deepgram — streaming cloud, needs a key']].forEach(function (o) {
         var op = h('option', { value: o[0], text: o[1] }); if (cfg.stt.provider === o[0]) op.selected = true; prov.appendChild(op);
       });
       body.appendChild(h('label', { class: 'onb-lbl', text: 'Speech-to-text provider' }));
@@ -124,7 +124,7 @@
       function paintKey() {
         keyWrap.innerHTML = '';
         var p = cfg.stt.provider;
-        if (p === 'local') { keyWrap.appendChild(h('p', { text: 'No key needed — the model downloads on first use.', style: 'margin-top:14px' })); return; }
+        if (p === 'local') { keyWrap.appendChild(h('p', { text: 'No key needed — the voice model (~75MB) downloads on first use, then works fully offline. For cleanup, Bol uses your local Ollama if running, else an instant offline cleaner — also $0.', style: 'margin-top:14px' })); return; }
         var lbl = p === 'deepgram' ? 'Deepgram API key' : 'API key';
         keyWrap.appendChild(h('label', { class: 'onb-lbl', text: lbl }));
         var key = p === 'deepgram' ? cfg.stt.deepgramKey : cfg.stt.openaiKey;

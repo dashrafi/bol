@@ -31,12 +31,16 @@ Toggle hotkey = same, start/stop on alternate presses. Command hotkey = same cap
 ```js
 {
   hotkeys: { pushToTalk: { code: 67, label: 'F9' }, toggle: { code: 68, label: 'F10' }, command: { code: 66, label: 'F8' } }, // uiohook-napi UiohookKey codes (verified on this machine)
-  stt: { provider: 'deepgram', // 'deepgram' | 'openai' | 'local'
+  stt: { provider: 'local', // 'local' (offline, free, DEFAULT) | 'deepgram' | 'openai'
          deepgramKey: '', deepgramModel: 'nova-2',
-         openaiKey: '', openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'whisper-1',
+         openaiKey: '', openaiBaseUrl: 'https://api.groq.com/openai/v1', openaiModel: 'whisper-large-v3-turbo', // Groq free tier
          localModel: 'onnx-community/whisper-base', language: 'auto' },
-  cleanup: { mode: 'full', // 'full' (AI) | 'light' (local regex) | 'off' (raw)
-             anthropicKey: '', model: 'claude-haiku-4-5-20251001',
+  cleanup: { mode: 'full', // 'full' (AI) | 'light' (offline regex) | 'off' (raw)
+             provider: 'ollama', // 'ollama' (local, free, DEFAULT) | 'openai' | 'anthropic'
+             ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: 'qwen2.5:3b',
+             openaiKey: '', openaiBaseUrl: 'https://api.groq.com/openai/v1', openaiModel: 'llama-3.3-70b-versatile',
+             anthropicKey: '', anthropicModel: 'claude-haiku-4-5-20251001',
+             preserveMixedLanguage: true, // Hinglish/Urdu/non-English → offline cleaner (LLM would translate)
              tone: 'auto', // 'auto' | 'formal' | 'casual' | 'raw'
              customInstructions: '',
              appRules: [ { match: 'slack', tone: 'casual' }, { match: 'outlook', tone: 'formal' } ] },
@@ -45,7 +49,9 @@ Toggle hotkey = same, start/stop on alternate presses. Command hotkey = same cap
   privacy: { localOnly: false, storeHistory: true }
 }
 ```
-`localOnly: true` ⇒ orchestrator forces `stt.provider='local'` + `cleanup.mode='light'` (no cloud calls, hard-enforced in index.js).
+`localOnly: true` ⇒ orchestrator forces `stt.provider='local'` + `cleanup.mode='light'` + `cleanup.provider='ollama'` (no cloud calls; command mode still works via local Ollama — hard-enforced in index.js `effectiveConfig()`).
+
+**FREE-FIRST**: defaults need **zero API keys** — local Whisper STT + Ollama cleanup, both on-device. `src/main/llm.js` abstracts the AI provider: `ollama` (local OpenAI-compatible, default) | `openai` (Groq free tier / any OpenAI-compatible / Gemini-compat) | `anthropic` (optional). `cleanup.js` routes code-switched text (Roman Urdu/Hinglish/non-English, via `looksNonEnglish`) to the offline regex cleaner because small local LLMs translate it. Local Whisper downloads via `BOL_HF_ENDPOINT` (default hf-mirror.com).
 
 ## IPC contract (preload exposes `window.bol`)
 

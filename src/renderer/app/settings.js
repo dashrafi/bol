@@ -127,13 +127,13 @@
   function sttSection() {
     var sec = h('div', { class: 'st-sec' }, [
       h('h2', { text: 'Speech-to-text' }),
-      h('div', { class: 'st-desc', text: 'Which engine turns your voice into text. Deepgram streams live; Local runs fully offline.' }),
+      h('div', { class: 'st-desc', text: 'Which engine turns your voice into text. Local runs fully offline and free (no key). Groq is a fast free-tier cloud. Deepgram streams live.' }),
     ]);
     var cards = h('div', { class: 'st-cards' });
     var providers = [
-      { v: 'deepgram', n: 'Deepgram', d: 'Streaming cloud — fastest, live partials' },
-      { v: 'openai', n: 'OpenAI / Groq', d: 'Whisper API, any compatible base URL' },
-      { v: 'local', n: 'Local Whisper', d: 'On-device, free, offline' },
+      { v: 'local', n: 'Local Whisper', d: 'On-device · free · no key · offline' },
+      { v: 'openai', n: 'Groq / OpenAI', d: 'Whisper API · Groq free tier · fast' },
+      { v: 'deepgram', n: 'Deepgram', d: 'Streaming cloud · live partials · key' },
     ];
     var detail = h('div');
     function paintDetail() {
@@ -143,16 +143,17 @@
         detail.appendChild(field('Deepgram API key', input(cfg.stt.deepgramKey, 'Token…', function (v) { patch({ stt: { deepgramKey: v } }, true); }, 'password')));
         detail.appendChild(field('Model', select(cfg.stt.deepgramModel, [{ v: 'nova-2', t: 'nova-2 (multilingual)' }, { v: 'nova-3', t: 'nova-3 (English keyterms)' }], function (v) { patch({ stt: { deepgramModel: v } }); })));
       } else if (p === 'openai') {
-        detail.appendChild(field('API key', input(cfg.stt.openaiKey, 'sk-… or gsk_…', function (v) { patch({ stt: { openaiKey: v } }, true); }, 'password')));
-        detail.appendChild(field('Base URL', input(cfg.stt.openaiBaseUrl, 'https://api.openai.com/v1', function (v) { patch({ stt: { openaiBaseUrl: v } }, true); })));
-        detail.appendChild(field('Model', input(cfg.stt.openaiModel, 'whisper-1', function (v) { patch({ stt: { openaiModel: v } }, true); })));
+        detail.appendChild(h('div', { class: 'st-desc', text: 'Free & fast: get a key at console.groq.com (free tier), keep the Groq base URL below. Or point it at OpenAI / any Whisper-compatible endpoint.' }));
+        detail.appendChild(field('API key', input(cfg.stt.openaiKey, 'gsk_… (Groq) or sk-…', function (v) { patch({ stt: { openaiKey: v } }, true); }, 'password')));
+        detail.appendChild(field('Base URL', input(cfg.stt.openaiBaseUrl, 'https://api.groq.com/openai/v1', function (v) { patch({ stt: { openaiBaseUrl: v } }, true); })));
+        detail.appendChild(field('Model', input(cfg.stt.openaiModel, 'whisper-large-v3-turbo', function (v) { patch({ stt: { openaiModel: v } }, true); })));
       } else {
         detail.appendChild(field('Local model', select(cfg.stt.localModel, [
           { v: 'onnx-community/whisper-tiny', t: 'tiny — fastest, lowest accuracy' },
           { v: 'onnx-community/whisper-base', t: 'base — balanced (recommended)' },
           { v: 'onnx-community/whisper-small', t: 'small — slower, more accurate' },
         ], function (v) { patch({ stt: { localModel: v } }); })));
-        detail.appendChild(h('div', { class: 'st-desc', text: 'First use downloads the model (~75MB for base) into your profile — one time.' }));
+        detail.appendChild(h('div', { class: 'st-desc', text: 'Runs on your PC — free, no key, works offline. First use downloads the model (~75MB for base) once.' }));
       }
       detail.appendChild(field('Language', select(cfg.stt.language, [
         { v: 'auto', t: 'Auto-detect' }, { v: 'en', t: 'English' }, { v: 'ur', t: 'Urdu' },
@@ -187,19 +188,48 @@
   function cleanupSection() {
     var sec = h('div', { class: 'st-sec' }, [
       h('h2', { text: 'AI cleanup' }),
-      h('div', { class: 'st-desc', text: 'Polishes the raw transcript — removes fillers, fixes punctuation, matches tone. This is what makes dictation read like you typed it.' }),
+      h('div', { class: 'st-desc', text: 'Polishes the raw transcript — removes fillers, fixes punctuation, matches tone. Runs free & local by default (Ollama), or offline regex if Ollama isn’t running.' }),
     ]);
     sec.appendChild(field('Mode', select(cfg.cleanup.mode, [
-      { v: 'full', t: 'Full — Claude cleans every dictation (best)' },
-      { v: 'light', t: 'Light — offline regex cleanup, no AI' },
+      { v: 'full', t: 'Full — AI cleans every dictation (best)' },
+      { v: 'light', t: 'Light — offline regex cleanup, no AI, no key' },
       { v: 'off', t: 'Off — insert raw transcript' },
     ], function (v) { patch({ cleanup: { mode: v } }); render(host); })));
     if (cfg.cleanup.mode === 'full') {
-      sec.appendChild(field('Anthropic API key', input(cfg.cleanup.anthropicKey, 'sk-ant-…', function (v) { patch({ cleanup: { anthropicKey: v } }, true); }, 'password')));
-      sec.appendChild(field('Model', select(cfg.cleanup.model, [
-        { v: 'claude-haiku-4-5-20251001', t: 'Claude Haiku 4.5 — fast + cheap (recommended)' },
-        { v: 'claude-sonnet-5', t: 'Claude Sonnet 5 — highest quality' },
-      ], function (v) { patch({ cleanup: { model: v } }); })));
+      // Provider picker — Ollama (local, free, default) / cloud / Anthropic.
+      var provCards = h('div', { class: 'st-cards' });
+      [
+        { v: 'ollama', n: 'Ollama (local)', d: 'Free · no key · offline · private' },
+        { v: 'openai', n: 'Free cloud', d: 'Groq/Gemini/OpenAI-compatible' },
+        { v: 'anthropic', n: 'Anthropic', d: 'Claude · optional · paid key' },
+      ].forEach(function (pr) {
+        var card = h('div', { class: 'st-card' + ((cfg.cleanup.provider || 'ollama') === pr.v ? ' sel' : '') }, [
+          h('div', { class: 'n', text: pr.n }), h('div', { class: 'd', text: pr.d }),
+        ]);
+        card.addEventListener('click', function () { patch({ cleanup: { provider: pr.v } }); render(host); });
+        provCards.appendChild(card);
+      });
+      sec.appendChild(h('div', { class: 'st-field' }, [h('label', { class: 'st-lbl', text: 'Cleanup engine' }), provCards]));
+
+      var prov = cfg.cleanup.provider || 'ollama';
+      if (prov === 'ollama') {
+        sec.appendChild(h('div', { class: 'st-desc', text: 'Uses your local Ollama (install from ollama.com, then: ollama pull qwen2.5:3b). Nothing leaves your PC. Best for English; Roman Urdu/Hinglish auto-uses the offline cleaner so it’s never translated.' }));
+        sec.appendChild(field('Ollama URL', input(cfg.cleanup.ollamaUrl, 'http://127.0.0.1:11434', function (v) { patch({ cleanup: { ollamaUrl: v } }, true); })));
+        sec.appendChild(field('Model', input(cfg.cleanup.ollamaModel, 'qwen2.5:3b', function (v) { patch({ cleanup: { ollamaModel: v } }, true); })));
+      } else if (prov === 'openai') {
+        sec.appendChild(h('div', { class: 'st-desc', text: 'Free & strong at Hinglish: get a key at console.groq.com (free tier). Or use Google Gemini’s OpenAI endpoint / OpenAI / any compatible base URL.' }));
+        sec.appendChild(field('API key', input(cfg.cleanup.openaiKey, 'gsk_… (Groq) or sk-…', function (v) { patch({ cleanup: { openaiKey: v } }, true); }, 'password')));
+        sec.appendChild(field('Base URL', input(cfg.cleanup.openaiBaseUrl, 'https://api.groq.com/openai/v1', function (v) { patch({ cleanup: { openaiBaseUrl: v } }, true); })));
+        sec.appendChild(field('Model', input(cfg.cleanup.openaiModel, 'llama-3.3-70b-versatile', function (v) { patch({ cleanup: { openaiModel: v } }, true); })));
+      } else {
+        sec.appendChild(h('div', { class: 'st-desc', text: 'Optional — a paid Anthropic key. Not required; Ollama and Groq are free.' }));
+        sec.appendChild(field('Anthropic API key', input(cfg.cleanup.anthropicKey, 'sk-ant-…', function (v) { patch({ cleanup: { anthropicKey: v } }, true); }, 'password')));
+        sec.appendChild(field('Model', select(cfg.cleanup.anthropicModel, [
+          { v: 'claude-haiku-4-5-20251001', t: 'Claude Haiku 4.5 — fast + cheap' },
+          { v: 'claude-sonnet-5', t: 'Claude Sonnet 5 — highest quality' },
+        ], function (v) { patch({ cleanup: { anthropicModel: v } }); })));
+      }
+      sec.appendChild(row('Protect mixed language', 'Route Roman Urdu / Hinglish / non-English to the offline cleaner so the AI never translates it.', toggle(cfg.cleanup.preserveMixedLanguage !== false, function (v) { patch({ cleanup: { preserveMixedLanguage: v } }); })));
       sec.appendChild(field('Default tone', select(cfg.cleanup.tone, [
         { v: 'auto', t: 'Auto (match the app)' }, { v: 'formal', t: 'Formal' },
         { v: 'casual', t: 'Casual' }, { v: 'raw', t: 'Raw (minimal edits)' },
@@ -228,12 +258,12 @@
       }
       paintRules(); rulesWrap.appendChild(list); sec.appendChild(rulesWrap);
 
-      var testBtn = h('button', { class: 'st-btn', type: 'button', text: 'Test Claude key' });
+      var testBtn = h('button', { class: 'st-btn', type: 'button', text: 'Test cleanup engine' });
       var testRes = h('span', { class: 'st-test' });
       testBtn.addEventListener('click', function () {
         testRes.className = 'st-test'; testRes.textContent = 'Testing…';
         invoke('test:cleanup').then(function (r) {
-          if (r && r.ok) { testRes.className = 'st-test ok'; testRes.textContent = '✓ Works'; }
+          if (r && r.ok) { testRes.className = 'st-test ok'; testRes.textContent = '✓ Works' + (r.model ? ' (' + r.model + ')' : ''); }
           else { testRes.className = 'st-test err'; testRes.textContent = '✗ ' + ((r && r.error) || 'failed'); }
         }).catch(function (e) { testRes.className = 'st-test err'; testRes.textContent = '✗ ' + e.message; });
       });

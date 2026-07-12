@@ -30,10 +30,13 @@ let quitting = false;
 function log(...a) { if (process.env.BOL_DEBUG) console.log('[bol]', ...a); }
 
 // localOnly hard enforcement: never hand a cloud provider to the pipeline when set.
+// STT → local Whisper; cleanup → offline regex; but command mode has no offline
+// path, so pin its provider to Ollama (local) so it still works fully on-device.
 function effectiveConfig() {
   const cfg = JSON.parse(JSON.stringify(config.get()));
   if (cfg.privacy && cfg.privacy.localOnly) {
     cfg.stt.provider = 'local';
+    cfg.cleanup.provider = 'ollama';
     if (cfg.cleanup.mode === 'full') cfg.cleanup.mode = 'light';
   }
   return cfg;

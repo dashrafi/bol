@@ -5,8 +5,8 @@
 // catches and shows the HUD error.
 'use strict';
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
+const llm = require('./llm');
+
 const COMMAND_TIMEOUT_MS = 30000; // generation can be slower than cleanup
 const MAX_TOKENS = 4096;
 
@@ -46,50 +46,6 @@ RULES
   );
 }
 
-async function callClaude({ apiKey, model, system, userText }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
-  try {
-    const resp = await fetch(ANTHROPIC_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': ANTHROPIC_VERSION,
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: MAX_TOKENS,
-        temperature: 0,
-        system,
-        messages: [{ role: 'user', content: userText }],
-      }),
-    });
-
-    if (!resp.ok) {
-      let detail = `HTTP ${resp.status}`;
-      try {
-        const err = await resp.json();
-        if (err && err.error && err.error.message) detail = err.error.message;
-      } catch (e) { /* non-JSON error body */ }
-      throw new Error(`Anthropic API error: ${detail}`);
-    }
-
-    const data = await resp.json();
-    const blocks = data && Array.isArray(data.content) ? data.content : [];
-    return blocks
-      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text)
-      .join('');
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw new Error('Command timed out');
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 // Defense in depth: never paste literal ``` wrappers the model was told not
 // to add. Only strips a fence that wraps the ENTIRE output.
 function stripFence(s) {
@@ -108,12 +64,16 @@ async function run(instruction, deps) {
   if (!injector) throw new Error('Text injection is unavailable');
 
   const c = (cfg && cfg.cleanup) || {};
-  if (cfg && cfg.privacy && cfg.privacy.localOnly) {
-    throw new Error('Command mode needs cloud AI — turn off Local-only mode to use it');
+  // Command mode always needs an AI (there is no offline "edit by instruction").
+  // Ollama (local, default) works even in Local-only mode; a cloud provider needs
+  // its key. Ollama-not-running surfaces as a clear error from llm.chat.
+  const provider = c.provider || 'ollama';
+  if (provider === 'anthropic' && !String(c.anthropicKey || '').trim()) {
+    throw new Error('Add your Anthropic key in Settings, or switch cleanup to Ollama (free, local) to use command mode');
   }
-  const apiKey = String(c.anthropicKey || '').trim();
-  if (!apiKey) throw new Error('Add your Anthropic API key in Settings to use command mode');
-  const model = c.model || 'claude-haiku-4-5-20251001';
+  if (provider === 'openai' && !String(c.openaiKey || '').trim()) {
+    throw new Error('Add your cloud AI key in Settings, or switch cleanup to Ollama (free, local) to use command mode');
+  }
 
   // Grab the current selection (may legitimately be empty → generate mode).
   let selection = '';
@@ -121,22 +81,13 @@ async function run(instruction, deps) {
   catch (e) { selection = ''; }
 
   const action = selection.trim() ? 'edit' : 'generate';
+  const opts = { maxTokens: MAX_TOKENS, timeoutMs: COMMAND_TIMEOUT_MS };
 
   let result;
   if (action === 'edit') {
-    result = await callClaude({
-      apiKey,
-      model,
-      system: editSystemPrompt(dictionary),
-      userText: `INSTRUCTION:\n${spoken}\n\nTEXT:\n${selection}`,
-    });
+    result = await llm.chat(c, editSystemPrompt(dictionary), `INSTRUCTION:\n${spoken}\n\nTEXT:\n${selection}`, opts);
   } else {
-    result = await callClaude({
-      apiKey,
-      model,
-      system: generateSystemPrompt(dictionary),
-      userText: spoken,
-    });
+    result = await llm.chat(c, generateSystemPrompt(dictionary), spoken, opts);
   }
 
   result = stripFence(result);

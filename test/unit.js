@@ -44,6 +44,42 @@ t('pure-noise / punctuation-only input returns empty', () => {
   assert.strictEqual(cleanup.localCleanup('um uh'), '');
 });
 
+console.log('llm.endpointFor (free-first provider routing)');
+const llm = require('../src/main/llm');
+t('defaults to local Ollama, no key', () => {
+  const ep = llm.endpointFor({});
+  assert.strictEqual(ep.local, true);
+  assert(/127\.0\.0\.1:11434\/v1\/chat\/completions$/.test(ep.url), ep.url);
+  assert.strictEqual(ep.key, '');
+});
+t('ollama url normalizes trailing slash / /v1', () => {
+  const ep = llm.endpointFor({ provider: 'ollama', ollamaUrl: 'http://localhost:11434/v1/' });
+  assert(/\/v1\/chat\/completions$/.test(ep.url) && !/v1\/v1/.test(ep.url), ep.url);
+});
+t('openai provider defaults to Groq free endpoint, needs key', () => {
+  const ep = llm.endpointFor({ provider: 'openai' });
+  assert(/api\.groq\.com\/openai\/v1\/chat\/completions$/.test(ep.url), ep.url);
+  assert.strictEqual(ep.local, false);
+});
+t('anthropic provider routes to messages API', () => {
+  const ep = llm.endpointFor({ provider: 'anthropic', anthropicKey: 'k' });
+  assert.strictEqual(ep.kind, 'anthropic');
+  assert(/anthropic\.com\/v1\/messages$/.test(ep.url), ep.url);
+});
+
+console.log('cleanup.looksNonEnglish (protects Hinglish from translation)');
+t('detects Roman Urdu / Hinglish', () => {
+  assert.strictEqual(cleanup.looksNonEnglish('kal subah demo ready hai bhai'), true);
+  assert.strictEqual(cleanup.looksNonEnglish('client ko email kardenge aur phir call'), true);
+});
+t('leaves plain English for the LLM', () => {
+  assert.strictEqual(cleanup.looksNonEnglish('the meeting is at four pm tomorrow'), false);
+  assert.strictEqual(cleanup.looksNonEnglish('ship the demo and email the client'), false);
+});
+t('flags real non-Latin script', () => {
+  assert.strictEqual(cleanup.looksNonEnglish('کل صبح ڈیمو تیار ہے'), true);
+});
+
 console.log('wav.pcm16ToWav');
 const wav = require('../src/main/stt/wav');
 t('valid RIFF header for 16k mono pcm16', () => {
@@ -133,14 +169,15 @@ config.init({ userData: tmp });
 t('required keys exist', () => {
   const c = config.get();
   for (const k of ['hotkeys', 'stt', 'cleanup', 'mic', 'ui', 'privacy']) assert(c[k], 'missing ' + k);
-  assert.strictEqual(c.stt.provider, 'deepgram');
+  assert.strictEqual(c.stt.provider, 'local');       // free/keyless default
+  assert.strictEqual(c.cleanup.provider, 'ollama');  // free/local default
   assert.strictEqual(c.cleanup.mode, 'full');
 });
 t('set patch deep-merges and persists', () => {
   config.set({ stt: { deepgramKey: 'dgk' } });
   const c = config.get();
   assert.strictEqual(c.stt.deepgramKey, 'dgk');
-  assert.strictEqual(c.stt.provider, 'deepgram'); // untouched sibling survives
+  assert.strictEqual(c.stt.provider, 'local'); // untouched sibling survives
 });
 
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

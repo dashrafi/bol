@@ -12,10 +12,8 @@
     "test": "node test/unit.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.5.2",
     "uiohook-napi": "^1.5.4"
-  },
-  "optionalDependencies": {
-    "@huggingface/transformers": "^3.5.2"
   },
   "devDependencies": {
     "electron": "^37.2.0"

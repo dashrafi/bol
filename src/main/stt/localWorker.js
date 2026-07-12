@@ -13,6 +13,12 @@
 
 const INSTALL_MSG = 'Local model support not installed — run: npm i @huggingface/transformers';
 
+// Model host for first-run downloads. Defaults to the hf-mirror.com mirror because
+// huggingface.co is intermittently blocked/reset on some networks (verified on the
+// owner's connection). Override with BOL_HF_ENDPOINT=https://huggingface.co to use
+// the primary host. Cached models never re-download regardless.
+const HF_ENDPOINT = process.env.BOL_HF_ENDPOINT || 'https://hf-mirror.com';
+
 let transformersPromise = null; // promise of the imported module
 let asrPromise = null;          // promise of the warm ASR pipeline
 let asrModel = '';              // model id asrPromise was built for
@@ -40,10 +46,12 @@ function loadTransformers() {
         ? m
         : (m && m.default && typeof m.default.pipeline === 'function' ? m.default : m);
       try {
-        if (mod && mod.env && process.env.BOL_MODELS_DIR) {
-          mod.env.cacheDir = process.env.BOL_MODELS_DIR;
+        if (mod && mod.env) {
+          if (process.env.BOL_MODELS_DIR) mod.env.cacheDir = process.env.BOL_MODELS_DIR;
+          // Point downloads at the reliable mirror (see HF_ENDPOINT note above).
+          mod.env.remoteHost = HF_ENDPOINT;
         }
-      } catch (e) { /* cache dir stays default */ }
+      } catch (e) { /* host/cache dir stay default */ }
       return mod;
     });
     // Allow a retry on a later run and avoid unhandled-rejection noise.

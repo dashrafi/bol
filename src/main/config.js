@@ -36,19 +36,28 @@ function buildDefaults() {
       command: { code: K.F8, label: 'F8' },
     },
     stt: {
-      provider: 'deepgram', // 'deepgram' | 'openai' | 'local'
+      provider: 'local', // 'local' (offline, free, DEFAULT) | 'deepgram' | 'openai'
       deepgramKey: '',
       deepgramModel: 'nova-2',
       openaiKey: '',
-      openaiBaseUrl: 'https://api.openai.com/v1',
-      openaiModel: 'whisper-1',
+      openaiBaseUrl: 'https://api.groq.com/openai/v1', // Groq free tier, OpenAI-compatible
+      openaiModel: 'whisper-large-v3-turbo',
       localModel: 'onnx-community/whisper-base',
       language: 'auto',
     },
     cleanup: {
-      mode: 'full', // 'full' (AI) | 'light' (local regex) | 'off' (raw)
+      mode: 'full', // 'full' (AI) | 'light' (offline regex) | 'off' (raw)
+      provider: 'ollama', // 'ollama' (local, free, DEFAULT) | 'openai' | 'anthropic'
+      ollamaUrl: 'http://127.0.0.1:11434',
+      ollamaModel: 'qwen2.5:3b',
+      openaiKey: '',
+      openaiBaseUrl: 'https://api.groq.com/openai/v1', // Groq free tier
+      openaiModel: 'llama-3.3-70b-versatile',
       anthropicKey: '',
-      model: 'claude-haiku-4-5-20251001',
+      anthropicModel: 'claude-haiku-4-5-20251001',
+      // Route code-switched (Roman Urdu/Hinglish/non-English) text to the offline
+      // cleaner instead of the LLM, which would translate it. Keeps mixed language intact.
+      preserveMixedLanguage: true,
       tone: 'auto', // 'auto' | 'formal' | 'casual' | 'raw'
       customInstructions: '',
       appRules: [
