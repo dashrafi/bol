@@ -349,6 +349,30 @@ if (!gotLock) { app.quit(); } else {
       return;
     }
 
+    // Diagnostic: `electron . --capture <png>` renders the dashboard fully wired,
+    // saves a screenshot, and exits. Used to verify the UI renders headlessly.
+    const capIdx = process.argv.indexOf('--capture');
+    if (capIdx !== -1) {
+      const outPath = process.argv[capIdx + 1] || 'bol-capture.png';
+      wins.app.show(); wins.app.focus();
+      const grab = async () => {
+        let png = null;
+        for (let i = 0; i < 5; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            const img = await wins.app.webContents.capturePage();
+            if (img && !img.isEmpty()) { png = img.toPNG(); if (png && png.length > 1000) break; }
+          } catch (e) { console.error('capture attempt failed', e.message); }
+        }
+        if (png && png.length > 1000) { require('fs').writeFileSync(outPath, png); console.log('CAPTURE OK ' + outPath + ' (' + png.length + ' bytes)'); }
+        else console.error('CAPTURE FAIL empty image');
+        quitting = true; app.exit(png ? 0 : 1);
+      };
+      if (wins.app.webContents.isLoading()) wins.app.webContents.once('did-finish-load', grab);
+      else grab();
+      return;
+    }
+
     if (!config.get().ui.onboarded) showDashboard();
   });
 
