@@ -34,10 +34,45 @@
     return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   }
 
+  // Virtual audio devices (SteelSeries Sonar, OBS, Voicemeeter, VB-Cable, NDI…)
+  // are silent unless their routing app is configured — a "default" that points at
+  // one records pure silence. Prefer a REAL microphone when the user hasn't
+  // explicitly picked a device.
+  const VIRTUAL_RX = /virtual|sonar|voicemeeter|vb-audio|cable|obs|ndi|anydesk|steam streaming|loopback/i;
+  let smartId = null; // cached pick; invalidated on device changes
+  try {
+    navigator.mediaDevices.addEventListener('devicechange', () => { smartId = null; });
+  } catch (_) { /* older API — cache just lives longer */ }
+
+  async function pickRealMicId() {
+    if (smartId !== null) return smartId;
+    let devices = [];
+    try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch (_) { return (smartId = ''); }
+    // Labels unlock only after one successful getUserMedia — poke if needed.
+    if (devices.length && devices.every((d) => !d.label)) {
+      try {
+        const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+        tmp.getTracks().forEach((t) => t.stop());
+        devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+      } catch (_) { return (smartId = ''); }
+    }
+    const named = devices.filter((d) => d.label && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    const real = named.filter((d) => !VIRTUAL_RX.test(d.label));
+    // Among real mics prefer obvious hardware names; else first real; else give up (system default).
+    const preferred = real.find((d) => /array|realtek|intel|usb|headset|webcam|camera/i.test(d.label)) || real[0];
+    smartId = preferred ? preferred.deviceId : '';
+    return smartId;
+  }
+
   async function getStream(deviceId) {
     const audio = baseAudioConstraints();
-    const wantExact = deviceId && deviceId !== 'default';
-    if (wantExact) audio.deviceId = { exact: deviceId };
+    let wantExact = deviceId && deviceId !== 'default';
+    if (wantExact) {
+      audio.deviceId = { exact: deviceId };
+    } else {
+      const real = await pickRealMicId();
+      if (real) { audio.deviceId = { exact: real }; wantExact = true; }
+    }
     try {
       return await navigator.mediaDevices.getUserMedia({ audio });
     } catch (err) {
@@ -45,6 +80,7 @@
       // fall back to the system default rather than failing the dictation.
       const n = (err && err.name) || '';
       if (wantExact && (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError' || n === 'NotFoundError')) {
+        smartId = null;
         return navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints() });
       }
       throw err;

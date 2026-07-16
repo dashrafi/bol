@@ -60,6 +60,7 @@ const defaults = {
 // ---------------------------------------------------------------------------
 let mode = uIOhook ? 'uiohook' : 'fallback';
 let H = {};                    // handlers
+let debugSink = null;          // optional line logger injected by the orchestrator (BOL_DEBUG)
 let binds = null;              // { pushToTalk|toggle|command: {code,label} }
 let started = false;           // uiohook running
 const downKeys = new Set();    // physical down-state per keycode (auto-repeat suppression)
@@ -94,6 +95,7 @@ function onKeyDown(e) {
   try {
     const code = e && e.keycode;
     if (typeof code !== 'number') return;
+    if (process.env.BOL_DEBUG && debugSink) debugSink('keydown code=' + code + (binds ? ' (ptt=' + binds.pushToTalk.code + ')' : ''));
     if (downKeys.has(code)) return; // OS auto-repeat — key is already physically down
     downKeys.add(code);
 
@@ -329,4 +331,5 @@ module.exports = {
   stop,
   defaults,
   get mode() { return mode; },
+  setDebugSink(fn) { debugSink = (typeof fn === 'function') ? fn : null; },
 };

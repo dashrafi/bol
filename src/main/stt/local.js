@@ -65,7 +65,7 @@ function ensureWorker() {
 
   const child = utilityProcess.fork(path.join(__dirname, 'localWorker.js'), [], {
     serviceName: 'bol-local-stt',
-    stdio: 'ignore',
+    stdio: process.env.BOL_DEBUG ? 'inherit' : 'ignore',
     env,
   });
 

@@ -27,7 +27,13 @@ let current = null; // { session, mode: 'dictate'|'command', via: 'ptt'|'toggle'
 let wins = { app: null, hud: null, recorder: null };
 let quitting = false;
 
-function log(...a) { if (process.env.BOL_DEBUG) console.log('[bol]', ...a); }
+let debugLogPath = null; // set at boot; file logging survives detached/GUI launches where stdout is lost
+function log(...a) {
+  if (!process.env.BOL_DEBUG) return;
+  const line = '[' + new Date().toISOString().slice(11, 23) + '] ' + a.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
+  console.log('[bol]', line);
+  if (debugLogPath) { try { require('fs').appendFileSync(debugLogPath, line + '\n'); } catch {} }
+}
 
 // localOnly hard enforcement: never hand a cloud provider to the pipeline when set.
 // STT → local Whisper; cleanup → offline regex; but command mode has no offline
@@ -101,6 +107,7 @@ async function startCapture(mode, via) {
   } catch (e) { return onPipelineError(null, e); }
 
   current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0 };
+  log('LISTENING', mode, via, 'stt=' + cfg.stt.provider, 'app=' + target.exe);
   hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
   recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
 }
@@ -114,6 +121,7 @@ function stopCapture(owner) {
     return;
   }
   if (owner && current.trigger !== owner) return; // stray keyup from a different trigger
+  log('FINALIZING, chunks fed =', current.chunks, 'maxLevel =', (current.maxLevel || 0).toFixed(3));
   state = S.FINALIZING;
   tray.setState('busy');
   recorderSend('rec:stop');
@@ -143,6 +151,12 @@ async function onFinal(sess, raw) {
   const cfg = effectiveConfig();
   const durationMs = Date.now() - ctx.startTs;
   raw = (raw || '').trim();
+  log('onFinal: raw len', raw.length, JSON.stringify(raw).slice(0, 100), 'maxLevel', (ctx.maxLevel || 0).toFixed(3));
+
+  // Whisper emits bracketed sentinels and stock hallucinations ("you",
+  // "Thank you.") on silent/near-silent audio — never paste those.
+  if (/^[\[\(][^\]\)]{0,30}[\]\)]$/.test(raw)) raw = '';
+  if ((ctx.maxLevel || 0) < 0.02 && raw.split(/\s+/).length <= 4) raw = '';
 
   if (!raw) {
     state = S.IDLE; tray.setState(enabled ? 'idle' : 'disabled');
@@ -178,7 +192,7 @@ async function onFinal(sess, raw) {
     }
 
     state = S.INSERTING; hudSend({ state: 'inserting' });
-    try { await injector.paste(text); }
+    try { await injector.paste(text); log('PASTED', text.length, 'chars into', ctx.app); }
     catch (e) { log('paste failed, typing fallback', e.message); await injector.typeText(text); }
 
     if (config.get().privacy.storeHistory) {
@@ -263,7 +277,10 @@ function registerIpc() {
     recorderSend('mic:enumerate');
     setTimeout(() => { if (micPending) { micPending([]); micPending = null; } }, 2500);
   }));
-  ipcMain.on('mic:devices', (e, devices) => { if (micPending) { micPending(devices || []); micPending = null; } });
+  ipcMain.on('mic:devices', (e, devices) => {
+    if (process.env.BOL_DEBUG) log('mics:', JSON.stringify((devices || []).map(d => d.label || d.deviceId)));
+    if (micPending) { micPending(devices || []); micPending = null; }
+  });
 
   ipcMain.handle('history:list', (e, q) => store.history.list(q || {}));
   ipcMain.handle('history:delete', (e, id) => store.history.delete(id));
@@ -289,10 +306,17 @@ function registerIpc() {
 
   // recorder events
   ipcMain.on('audio:chunk', (e, buf) => {
-    if (state === S.LISTENING && current) { current.chunks++; try { current.session.feed(Buffer.from(buf)); } catch {} }
+    if (state === S.LISTENING && current) {
+      current.chunks++;
+      if (current.chunks === 1 || current.chunks % 20 === 0) log('audio chunks:', current.chunks);
+      try { current.session.feed(Buffer.from(buf)); } catch (err) { log('feed error', err.message); }
+    }
   });
-  ipcMain.on('audio:level', (e, level) => { if (state === S.LISTENING) hudSend({ state: 'listening', level }); });
-  ipcMain.on('audio:error', (e, msg) => { if (state === S.LISTENING || state === S.FINALIZING) onPipelineError(null, new Error(msg || 'Microphone error')); });
+  ipcMain.on('audio:level', (e, level) => {
+    if (current && typeof level === 'number') current.maxLevel = Math.max(current.maxLevel || 0, level);
+    if (state === S.LISTENING) hudSend({ state: 'listening', level });
+  });
+  ipcMain.on('audio:error', (e, msg) => { log('audio:error', msg); if (state === S.LISTENING || state === S.FINALIZING) onPipelineError(null, new Error(msg || 'Microphone error')); });
 
   ipcMain.on('hud:cancel', () => cancelCapture());
 }
@@ -311,6 +335,25 @@ if (!gotLock) { app.quit(); } else {
   app.whenReady().then(async () => {
     const paths = { userData: app.getPath('userData') };
     process.env.BOL_MODELS_DIR = path.join(paths.userData, 'models');
+    if (process.env.BOL_DEBUG) {
+      debugLogPath = path.join(paths.userData, 'debug.log');
+      try { require('fs').writeFileSync(debugLogPath, ''); } catch {}
+      log('BOOT pid', process.pid, 'version', app.getVersion());
+      // QA hook: uiohook cannot see SendInput-injected keys, so automated tests
+      // drive the pipeline via a trigger file instead of the real hotkey.
+      // Write "start" / "stop" to <userData>/trigger.txt.
+      const trigPath = path.join(paths.userData, 'trigger.txt');
+      let lastTrig = '';
+      setInterval(() => {
+        let t = '';
+        try { t = require('fs').readFileSync(trigPath, 'utf8').trim(); } catch { return; }
+        if (t === lastTrig) return;
+        lastTrig = t;
+        log('TRIGGER', t);
+        if (t.startsWith('start')) { recorderSend('mic:enumerate'); startCapture('dictate', 'ptt'); }
+        else if (t.startsWith('stop')) stopCapture('ptt');
+      }, 300);
+    }
 
     config.init(paths);
     store.init(paths);
@@ -332,6 +375,7 @@ if (!gotLock) { app.quit(); } else {
         onCommandUp: () => stopCapture('command'),
       }, config.get().hotkeys);
       bootReport.hotkeys = hotkeys.mode;
+      if (process.env.BOL_DEBUG) hotkeys.setDebugSink((line) => log(line));
     } catch (e) { bootReport.hotkeys = 'failed: ' + e.message; console.error('[bol] hotkeys init failed', e); }
 
     tray.create({
