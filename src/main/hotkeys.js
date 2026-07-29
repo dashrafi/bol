@@ -95,7 +95,11 @@ function onKeyDown(e) {
   try {
     const code = e && e.keycode;
     if (typeof code !== 'number') return;
-    if (process.env.BOL_DEBUG && debugSink) debugSink('keydown code=' + code + (binds ? ' (ptt=' + binds.pushToTalk.code + ')' : ''));
+    // Deliberately NOT logged: writing every keycode to the debug log would make
+    // it a keylog of everything the user types. Only OUR hotkeys are logged, below.
+    if (debugSink && binds && (code === binds.pushToTalk.code || code === binds.toggle.code || code === binds.command.code)) {
+      debugSink('hotkey down: code=' + code);
+    }
     if (downKeys.has(code)) return; // OS auto-repeat — key is already physically down
     downKeys.add(code);
 
