@@ -83,30 +83,50 @@
     }).catch(function () {});
 
     invoke('settings:get').then(function (c) {
-      cfg = c;
-      window.bolConfig = c;
+      publish(c);
       applyGate();
       if (!document.body.classList.contains('onboarding')) show('dashboard');
     }).catch(function () { show('dashboard'); });
 
     if (window.bol && typeof window.bol.on === 'function') {
       window.bol.on('settings:changed', function (c) {
-        var wasOnb = !cfg || !cfg.ui || !cfg.ui.onboarded;
-        cfg = c;
-        window.bolConfig = c;
-        var nowOnb = !cfg || !cfg.ui || !cfg.ui.onboarded;
-        // Re-gate ONLY when the onboarded flag actually flipped. Otherwise never
-        // rebuild the settings/onboarding editors from the settings:changed THEY
-        // emit on each keystroke (would destroy the focused input). Passive pages
-        // (dashboard/history/…) do refresh to reflect external changes.
-        if (wasOnb !== nowOnb) applyGate();
-        else if (!nowOnb && current !== 'settings' && current !== 'onboarding') render(current);
+        publish(c);
+        // Compare against what is actually ON SCREEN, not against the previous cfg:
+        // pages mutate their own copy before saving, so a cfg-vs-cfg check can
+        // miss the flip and leave the user stuck on the onboarding screen.
+        var showing = document.body.classList.contains('onboarding');
+        var shouldOnboard = !cfg || !cfg.ui || !cfg.ui.onboarded;
+        if (showing !== shouldOnboard) return applyGate();
+        // No gate change: refresh passive pages only. Never rebuild the
+        // settings/onboarding editors from the settings:changed THEY emit on each
+        // keystroke — that would destroy the input being typed into.
+        if (!shouldOnboard && current !== 'settings' && current !== 'onboarding') render(current);
       });
     }
   }
 
+  // Pages get their OWN copy so their edits can never mutate the shell's view of
+  // the config (that shared-object mutation is what broke the onboarding gate).
+  function publish(c) {
+    cfg = c;
+    var copy = c;
+    try { copy = JSON.parse(JSON.stringify(c)); } catch (e) { /* fall back to the live object */ }
+    window.bolConfig = copy;
+  }
+
   // expose for onboarding to jump into the app after finishing
-  window.BolShell = { show: show, render: function () { render(current); }, getConfig: function () { return cfg; } };
+  window.BolShell = {
+    show: show,
+    render: function () { render(current); },
+    getConfig: function () { return cfg; },
+    // Called by the onboarding wizard's finish button so leaving the wizard never
+    // depends on the settings:changed round-trip coming back.
+    finishOnboarding: function () {
+      if (cfg && cfg.ui) cfg.ui.onboarded = true;
+      document.body.classList.remove('onboarding');
+      show('dashboard');
+    },
+  };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

@@ -466,8 +466,20 @@ if (!gotLock) { app.quit(); } else {
         else console.error('CAPTURE FAIL empty image');
         quitting = true; app.exit(png ? 0 : 1);
       };
-      if (wins.app.webContents.isLoading()) wins.app.webContents.once('did-finish-load', grab);
-      else grab();
+      // Optional QA: `--exec "<js>"` runs JS in the dashboard renderer before the
+      // capture (used to drive UI flows automatically) and prints its result.
+      const execIdx = process.argv.indexOf('--exec');
+      const execJs = execIdx !== -1 ? process.argv[execIdx + 1] : null;
+      const run = async () => {
+        if (execJs) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try { console.log('EXEC RESULT: ' + JSON.stringify(await wins.app.webContents.executeJavaScript(execJs, true))); }
+          catch (e) { console.error('EXEC FAIL: ' + e.message); }
+        }
+        await grab();
+      };
+      if (wins.app.webContents.isLoading()) wins.app.webContents.once('did-finish-load', run);
+      else run();
       return;
     }
 

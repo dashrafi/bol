@@ -179,6 +179,18 @@ t('set patch deep-merges and persists', () => {
   assert.strictEqual(c.stt.deepgramKey, 'dgk');
   assert.strictEqual(c.stt.provider, 'local'); // untouched sibling survives
 });
+t('a UTF-8 BOM does not wipe saved settings', () => {
+  // Editors and PowerShell's Set-Content add a BOM; JSON.parse throws on it, which
+  // used to be treated as "corrupt" and silently reset every user setting.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bol-bom-'));
+  fs.writeFileSync(path.join(dir, 'config.json'),
+    '﻿' + JSON.stringify({ stt: { localModel: 'onnx-community/whisper-small' } }), 'utf8');
+  const fresh = require('../src/main/config');
+  fresh.init({ userData: dir });
+  assert.strictEqual(fresh.get().stt.localModel, 'onnx-community/whisper-small');
+  assert.strictEqual(fs.existsSync(path.join(dir, 'config.json.bak')), false, 'must not quarantine a BOM file');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
 console.log(`\n${pass} passed, ${fail} failed`);

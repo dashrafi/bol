@@ -138,7 +138,10 @@ function init(paths) {
     const defaults = buildDefaults();
     if (fs.existsSync(filePath)) {
       try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        // Strip a UTF-8 BOM before parsing: editors and PowerShell's Set-Content
+        // happily add one, and JSON.parse throws on it — which used to look like
+        // "corrupt config" and silently reset every setting the user had.
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^﻿/, ''));
         cfg = deepMerge(defaults, parsed);
       } catch (e) {
         // Corrupt config: preserve the bytes as .bak, recreate from defaults.

@@ -23,7 +23,12 @@
     (kids || []).forEach(function (k) { if (k != null) e.appendChild(typeof k === 'string' ? document.createTextNode(k) : k); });
     return e;
   }
-  function patch(p) { deepMerge(cfg, p); invoke('settings:set', p).then(function (c) { if (c) cfg = window.bolConfig = c; }); }
+  function patch(p) {
+    deepMerge(cfg, p);
+    invoke('settings:set', p)
+      .then(function (c) { if (c) cfg = window.bolConfig = c; })
+      .catch(function (e) { if (window.bolToast) window.bolToast('Could not save: ' + (e && e.message), 'error'); });
+  }
   function deepMerge(t, s) { for (var k in s) { if (s[k] && typeof s[k] === 'object' && !Array.isArray(s[k])) { t[k] = t[k] || {}; deepMerge(t[k], s[k]); } else t[k] = s[k]; } return t; }
 
   function injectStyle() {
@@ -101,7 +106,14 @@
     back.style.visibility = step === 0 ? 'hidden' : 'visible';
     back.addEventListener('click', function () { step = Math.max(0, step - 1); render(el); });
     next.addEventListener('click', function () {
-      if (step === 3) { stopMeter(); patch({ ui: { onboarded: true } }); return; }
+      if (step === 3) {
+        stopMeter();
+        patch({ ui: { onboarded: true } });
+        // Leave the wizard immediately — never wait on the settings:changed
+        // round-trip (if it is missed, the user is stuck clicking forever).
+        if (window.BolShell && typeof window.BolShell.finishOnboarding === 'function') window.BolShell.finishOnboarding();
+        return;
+      }
       step++; render(el);
     });
 
