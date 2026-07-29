@@ -107,6 +107,12 @@ async function startCapture(mode, via) {
   } catch (e) { return onPipelineError(null, e); }
 
   current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0 };
+  // Safety net: a forgotten hands-free/tap-toggle session auto-finalizes after
+  // 5 minutes instead of holding the mic open forever.
+  const guarded = current;
+  setTimeout(() => {
+    if (state === S.LISTENING && current === guarded) { log('max session length reached — auto-stopping'); stopCapture(); }
+  }, 5 * 60 * 1000);
   log('LISTENING', mode, via, 'stt=' + cfg.stt.provider, 'app=' + target.exe);
   hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
   recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
@@ -121,6 +127,14 @@ function stopCapture(owner) {
     return;
   }
   if (owner && current.trigger !== owner) return; // stray keyup from a different trigger
+  // A quick TAP (released under 350ms) means the user expects start/stop toggling,
+  // not push-to-talk — keep listening; the next tap of the same key stops it.
+  if (current.via === 'ptt' && current.mode === 'dictate' && (Date.now() - current.startTs) < 350) {
+    current.via = 'tap-toggle';
+    log('tap detected -> hands-free until next tap');
+    hudSend({ state: 'listening', message: 'Recording — tap again to stop' });
+    return;
+  }
   log('FINALIZING, chunks fed =', current.chunks, 'maxLevel =', (current.maxLevel || 0).toFixed(3));
   state = S.FINALIZING;
   tray.setState('busy');
@@ -371,7 +385,12 @@ if (!gotLock) { app.quit(); } else {
 
     try {
       hotkeys.init({
-        onPTTDown: () => startCapture('dictate', 'ptt'),
+        onPTTDown: () => {
+          // Second tap of a tap-toggle capture stops it (duration is now > 350ms,
+          // so stopCapture finalizes instead of re-converting).
+          if (state === S.LISTENING && current && current.trigger === 'ptt' && current.via === 'tap-toggle') return stopCapture('ptt');
+          startCapture('dictate', 'ptt');
+        },
         onPTTUp: () => stopCapture('ptt'),
         onToggle: () => { (state === S.IDLE) ? startCapture('dictate', 'toggle') : (state === S.LISTENING && current && current.via === 'toggle' && stopCapture('toggle')); },
         onCommandDown: () => startCapture('command', 'ptt'),

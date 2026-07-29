@@ -14,10 +14,15 @@ using System.Runtime.InteropServices;
 public static class BolNative {
   [StructLayout(LayoutKind.Sequential)]
   public struct INPUT { public uint type; public InputUnion U; public static int Size { get { return Marshal.SizeOf(typeof(INPUT)); } } }
+  // The union MUST include MOUSEINPUT even though we only send keyboard events:
+  // it is the largest member, and without it sizeof(INPUT) is 32 instead of 40,
+  // which makes EVERY SendInput call fail with ERROR_INVALID_PARAMETER (87).
   [StructLayout(LayoutKind.Explicit)]
-  public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
+  public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public MOUSEINPUT mi; }
   [StructLayout(LayoutKind.Sequential)]
   public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
 
   [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] p, int cb);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
@@ -49,17 +54,19 @@ public static class BolNative {
       System.Threading.Thread.Sleep(15); waited += 15;
     }
   }
-  static void Combo(ushort mod, ushort key) {
+  static uint Combo(ushort mod, ushort key) {
     INPUT[] a = new INPUT[4];
     One(ref a, 0, mod, 0, 0); One(ref a, 1, key, 0, 0);
     One(ref a, 2, key, 0, KEYUP); One(ref a, 3, mod, 0, KEYUP);
-    SendInput(4, a, INPUT.Size);
+    return SendInput(4, a, INPUT.Size);
   }
-  public static void CtrlV() { WaitModifiers(1000); Combo(0x11, 0x56); }
-  public static void CtrlC() { WaitModifiers(1000); Combo(0x11, 0x43); }
-  public static void Enter() { WaitModifiers(1000); INPUT[] a = new INPUT[2]; One(ref a,0,0x0D,0,0); One(ref a,1,0x0D,0,KEYUP); SendInput(2, a, INPUT.Size); }
+  // All return the number of events injected — 0 means Windows rejected the call
+  // (UIPI/blocked); callers MUST check and report failure instead of claiming ok.
+  public static uint CtrlV() { WaitModifiers(1000); return Combo(0x11, 0x56); }
+  public static uint CtrlC() { WaitModifiers(1000); return Combo(0x11, 0x43); }
+  public static uint Enter() { WaitModifiers(1000); INPUT[] a = new INPUT[2]; One(ref a,0,0x0D,0,0); One(ref a,1,0x0D,0,KEYUP); return SendInput(2, a, INPUT.Size); }
 
-  public static void TypeString(string s) {
+  public static uint TypeString(string s) {
     WaitModifiers(1000);
     var list = new System.Collections.Generic.List<INPUT>(s.Length * 2);
     foreach (char c in s) {
@@ -68,7 +75,8 @@ public static class BolNative {
       list.Add(d); list.Add(u);
     }
     INPUT[] arr = list.ToArray();
-    if (arr.Length > 0) SendInput((uint)arr.Length, arr, INPUT.Size);
+    if (arr.Length == 0) return 1;
+    return SendInput((uint)arr.Length, arr, INPUT.Size);
   }
 
   public static uint ClipSeq() { return GetClipboardSequenceNumber(); }
@@ -148,29 +156,40 @@ while ($true) {
         $prev = Get-ClipText
         Set-ClipText $text
         Start-Sleep -Milliseconds 20
-        [BolNative]::CtrlV()
-        if ($req.args.pressEnter) { Start-Sleep -Milliseconds 60; [BolNative]::Enter() }
-        Start-Sleep -Milliseconds 350         # let the target read before we restore
-        Set-ClipText $prev
-        Send-Response $id $true 'ok' $null
+        $sent = [BolNative]::CtrlV()
+        if ($sent -eq 0) {
+          Set-ClipText $prev
+          Send-Response $id $false $null 'SendInput rejected the paste keystroke (blocked by the system)'
+        } else {
+          if ($req.args.pressEnter) { Start-Sleep -Milliseconds 60; [void][BolNative]::Enter() }
+          Start-Sleep -Milliseconds 350       # let the target read before we restore
+          Set-ClipText $prev
+          Send-Response $id $true 'ok' $null
+        }
       }
       'type' {
-        [BolNative]::TypeString([string]$req.args.text)
-        if ($req.args.pressEnter) { Start-Sleep -Milliseconds 40; [BolNative]::Enter() }
-        Send-Response $id $true 'ok' $null
+        $sent = [BolNative]::TypeString([string]$req.args.text)
+        if ($sent -eq 0) {
+          Send-Response $id $false $null 'SendInput rejected the typed text (blocked by the system)'
+        } else {
+          if ($req.args.pressEnter) { Start-Sleep -Milliseconds 40; [void][BolNative]::Enter() }
+          Send-Response $id $true 'ok' $null
+        }
       }
       'copysel' {
         $prev = Get-ClipText
         $seq0 = [BolNative]::ClipSeq()
         [System.Windows.Forms.Clipboard]::Clear()
-        [BolNative]::CtrlC()
+        $sent = [BolNative]::CtrlC()
         $got = ''
-        $waited = 0
-        while ($waited -lt 600) {
-          Start-Sleep -Milliseconds 40; $waited += 40
-          if ([BolNative]::ClipSeq() -ne $seq0) {
-            $c = Get-ClipText
-            if ($null -ne $c) { $got = $c; break }
+        if ($sent -ne 0) {
+          $waited = 0
+          while ($waited -lt 600) {
+            Start-Sleep -Milliseconds 40; $waited += 40
+            if ([BolNative]::ClipSeq() -ne $seq0) {
+              $c = Get-ClipText
+              if ($null -ne $c) { $got = $c; break }
+            }
           }
         }
         Start-Sleep -Milliseconds 30
