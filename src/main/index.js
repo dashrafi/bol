@@ -72,6 +72,8 @@ function positionHud() {
 // ---------- pipeline ----------
 let pendingStop = false;      // a keyup arrived during startCapture's await, before `current` existed
 let startingTrigger = null;   // which trigger's capture is mid-startup (for owner-matched pendingStop)
+let preBuffer = [];           // audio that arrives before the STT session exists (first words!)
+let preMaxLevel = 0;
 
 async function startCapture(mode, via) {
   if (!enabled || state !== S.IDLE) return;
@@ -80,18 +82,26 @@ async function startCapture(mode, via) {
   state = S.LISTENING;
   pendingStop = false;
   startingTrigger = trigger;
+  preBuffer = [];
+  preMaxLevel = 0;
   tray.setState('listening');
+
+  // Start the mic IMMEDIATELY — the foreground lookup + session setup below cost
+  // hundreds of ms, and any words spoken in that window were being lost. Frames
+  // that arrive before the session exists land in preBuffer and are fed later.
+  recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
+  hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
 
   let target = { exe: '', title: '' };
   try { target = await injector.getActiveWindow(); } catch (e) { log('activeWindow failed', e.message); }
   startingTrigger = null;
 
   // The user may have released PTT (or cancelled) during the await above, when
-  // `current` was still null so stopCapture couldn't act. Honor that now: never
-  // start the mic for a capture that was already released, or we'd be stuck
-  // LISTENING with a session nothing ever ends.
+  // `current` was still null so stopCapture couldn't act. Honor that now.
   if (pendingStop || state !== S.LISTENING) {
     pendingStop = false;
+    preBuffer = [];
+    recorderSend('rec:stop');
     if (state === S.LISTENING) { state = S.IDLE; tray.setState(enabled ? 'idle' : 'disabled'); hudSend({ state: 'idle' }); }
     return;
   }
@@ -106,7 +116,10 @@ async function startCapture(mode, via) {
     });
   } catch (e) { return onPipelineError(null, e); }
 
-  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0 };
+  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel };
+  // Hand the buffered first words to the session in order.
+  for (const b of preBuffer) { current.chunks++; try { sess.feed(b); } catch {} }
+  preBuffer = [];
   // Safety net: a forgotten hands-free/tap-toggle session auto-finalizes after
   // 5 minutes instead of holding the mic open forever.
   const guarded = current;
@@ -114,8 +127,6 @@ async function startCapture(mode, via) {
     if (state === S.LISTENING && current === guarded) { log('max session length reached — auto-stopping'); stopCapture(); }
   }, 5 * 60 * 1000);
   log('LISTENING', mode, via, 'stt=' + cfg.stt.provider, 'app=' + target.exe);
-  hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
-  recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
 }
 
 function stopCapture(owner) {
@@ -174,8 +185,8 @@ async function onFinal(sess, raw) {
 
   if (!raw) {
     state = S.IDLE; tray.setState(enabled ? 'idle' : 'disabled');
-    hudSend({ state: 'error', message: "Didn't catch that — try again" });
-    setTimeout(() => hudSend({ state: 'idle' }), 1800);
+    hudSend({ state: 'error', message: "Couldn't hear you — check your mic, or pick the right one in Settings" });
+    setTimeout(() => hudSend({ state: 'idle' }), 2600);
     return;
   }
 
@@ -212,9 +223,23 @@ async function onFinal(sess, raw) {
     if (config.get().privacy.storeHistory) {
       store.history.add({ raw, polished: text, app: ctx.app, title: ctx.title, durationMs, provider: cfg.stt.provider });
     }
-    analytics.record({ words: text.split(/\s+/).filter(Boolean).length, durationMs, app: ctx.app });
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    analytics.record({ words: wordCount, durationMs, app: ctx.app });
     state = S.IDLE; tray.setState('idle');
-    hudSend({ state: 'idle' });
+
+    // Partial-capture warning: a long recording that produced very few words
+    // (or barely-audible input) means the mic missed most of the speech. The
+    // text still pasted — but tell the user WHY it came out short.
+    const secs = durationMs / 1000;
+    const sparse = secs > 5 && (wordCount / secs) < 0.8;
+    const quiet = (ctx.maxLevel || 0) < 0.06;
+    if (sparse || quiet) {
+      log('unclear-audio warning: words/s =', (wordCount / secs).toFixed(2), 'maxLevel =', (ctx.maxLevel || 0).toFixed(3));
+      hudSend({ state: 'error', message: "Couldn't hear parts of that — speak closer, or pick the right mic in Settings" });
+      setTimeout(() => hudSend({ state: 'idle' }), 3500);
+    } else {
+      hudSend({ state: 'idle' });
+    }
   } catch (e) { onPipelineError(null, e); }
 }
 
@@ -320,14 +345,21 @@ function registerIpc() {
 
   // recorder events
   ipcMain.on('audio:chunk', (e, buf) => {
-    if (state === S.LISTENING && current) {
+    if (state !== S.LISTENING) return;
+    if (current) {
       current.chunks++;
       if (current.chunks === 1 || current.chunks % 20 === 0) log('audio chunks:', current.chunks);
       try { current.session.feed(Buffer.from(buf)); } catch (err) { log('feed error', err.message); }
+    } else if (preBuffer.length < 100) {
+      // session still being created — keep the first words (up to ~10s)
+      preBuffer.push(Buffer.from(buf));
     }
   });
   ipcMain.on('audio:level', (e, level) => {
-    if (current && typeof level === 'number') current.maxLevel = Math.max(current.maxLevel || 0, level);
+    if (typeof level === 'number') {
+      if (current) current.maxLevel = Math.max(current.maxLevel || 0, level);
+      else preMaxLevel = Math.max(preMaxLevel, level);
+    }
     if (state === S.LISTENING) hudSend({ state: 'listening', level });
   });
   ipcMain.on('audio:error', (e, msg) => { log('audio:error', msg); if (state === S.LISTENING || state === S.FINALIZING) onPipelineError(null, new Error(msg || 'Microphone error')); });
