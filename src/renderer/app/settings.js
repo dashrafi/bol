@@ -84,7 +84,11 @@
       '.st-test{font-size:12px;margin-left:10px}',
       '.st-test.ok{color:#8ff0bf}.st-test.err{color:#ffb3c1}',
       '.st-rule{display:flex;gap:8px;align-items:center;margin-top:8px}',
-      '.st-rule .st-in{flex:1}',
+      // The app-name box must keep real width. `.st-in`/`.st-sel` both carry
+      // width:100%, so without an explicit basis the select claimed the whole row
+      // and squeezed the text box to ~40px (it looked like an empty mystery square).
+      '.st-rule .st-in{flex:1 1 auto;min-width:0}',
+      '.st-rule .st-sel{flex:0 0 130px;width:130px}',
       '.st-mini{border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.05);color:#cfd3ee;border-radius:9px;width:34px;height:34px;flex:none;cursor:pointer;font-size:16px;line-height:1}',
       '.st-inline{display:flex;align-items:center;gap:10px}',
       '.st-range{flex:1;accent-color:#7d8aff}',
@@ -241,7 +245,10 @@
       sec.appendChild(field('Custom instructions (optional)', ta));
 
       // per-app tone rules
-      var rulesWrap = h('div', { class: 'st-field' }, [h('label', { class: 'st-lbl', text: 'Per-app tone rules' })]);
+      var rulesWrap = h('div', { class: 'st-field' }, [
+        h('label', { class: 'st-lbl', text: 'Per-app tone rules' }),
+        h('div', { class: 'st-desc', style: 'margin:0 0 4px', text: 'When the app you are dictating into matches this name, use that tone. Left box = part of the app name (e.g. "slack", "outlook"); right box = the tone.' }),
+      ]);
       var list = h('div');
       function paintRules() {
         list.innerHTML = '';
