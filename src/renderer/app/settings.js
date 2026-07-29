@@ -311,6 +311,58 @@
     sel.addEventListener('change', function () { patch({ mic: { deviceId: sel.value } }); });
     sec.appendChild(field('Device', sel));
 
+    // Live mic test — the only reliable way to know which device hears YOU
+    // (probing can't tell a quiet room from a dead device, and laptop arrays
+    // hardware-cancel your own speakers).
+    var meterFill = h('div', { style: 'height:100%;width:0;background:linear-gradient(90deg,#6c7bff,#58d68d);transition:width .06s linear' });
+    var meterBox = h('div', { style: 'height:14px;border-radius:8px;background:rgba(9,12,22,.7);border:1px solid rgba(255,255,255,.1);overflow:hidden;flex:1' }, [meterFill]);
+    var meterMsg = h('span', { class: 'st-test', style: 'min-width:170px' });
+    var testMicBtn = h('button', { class: 'st-btn', type: 'button', text: 'Test microphone' });
+    var micStop = null;
+    testMicBtn.addEventListener('click', function () {
+      if (micStop) { micStop(); return; }
+      var id = sel.value;
+      var constraints = { echoCancellation: false, noiseSuppression: true, autoGainControl: false };
+      if (id && id !== 'default') constraints.deviceId = { exact: id };
+      meterMsg.className = 'st-test'; meterMsg.textContent = 'Opening mic…';
+      navigator.mediaDevices.getUserMedia({ audio: constraints }).then(function (stream) {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var an = ctx.createAnalyser(); an.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(an);
+        var data = new Float32Array(an.fftSize), raf, peak = 0, started = Date.now();
+        testMicBtn.textContent = 'Stop test';
+        meterMsg.textContent = 'Say something…';
+        function loop() {
+          an.getFloatTimeDomainData(data);
+          var p = 0;
+          for (var i = 0; i < data.length; i++) { var v = Math.abs(data[i]); if (v > p) p = v; }
+          if (p > peak) peak = p;
+          meterFill.style.width = Math.min(100, p * 250) + '%';
+          var secs = (Date.now() - started) / 1000;
+          if (secs > 2.5) {
+            if (peak < 0.01) { meterMsg.className = 'st-test err'; meterMsg.textContent = '✗ Nothing heard — try another device'; }
+            else { meterMsg.className = 'st-test ok'; meterMsg.textContent = '✓ Hearing you (peak ' + peak.toFixed(2) + ')'; }
+          }
+          raf = requestAnimationFrame(loop);
+        }
+        loop();
+        micStop = function () {
+          cancelAnimationFrame(raf);
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          ctx.close();
+          micStop = null; testMicBtn.textContent = 'Test microphone'; meterFill.style.width = '0';
+        };
+      }).catch(function (e) {
+        meterMsg.className = 'st-test err';
+        meterMsg.textContent = '✗ ' + (e && e.name === 'NotAllowedError' ? 'Mic permission denied' : (e && e.message) || 'could not open');
+      });
+    });
+    sec.appendChild(h('div', { class: 'st-field' }, [
+      h('label', { class: 'st-lbl', text: 'Check this mic actually hears you' }),
+      h('div', { class: 'st-inline' }, [testMicBtn, meterBox]),
+      h('div', { class: 'st-inline', style: 'margin-top:6px' }, [meterMsg]),
+    ]));
+
     var g = h('input', { class: 'st-range', type: 'range', min: '0.5', max: '3', step: '0.1', value: String(cfg.mic.gain || 1) });
     var gv = h('span', { class: 'l', text: (cfg.mic.gain || 1).toFixed(1) + '×', style: 'min-width:38px;text-align:right' });
     g.addEventListener('input', function () { gv.textContent = parseFloat(g.value).toFixed(1) + '×'; patch({ mic: { gain: parseFloat(g.value) } }, true); });

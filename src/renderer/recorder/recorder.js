@@ -46,44 +46,121 @@
     };
   }
 
-  // Virtual audio devices (SteelSeries Sonar, OBS, Voicemeeter, VB-Cable, NDI…)
-  // are silent unless their routing app is configured — a "default" that points at
-  // one records pure silence. Prefer a REAL microphone when the user hasn't
-  // explicitly picked a device.
+  // Choosing a microphone by NAME is not enough: virtual devices (SteelSeries
+  // Sonar, OBS, Voicemeeter…) and idle Bluetooth headsets happily open and then
+  // deliver pure digital silence — which looked exactly like "Bol can't hear me".
+  // So candidates are PROBED: we open each one briefly and keep the first that
+  // actually produces signal. The winner is cached; a silent session or a device
+  // change invalidates it.
   const VIRTUAL_RX = /virtual|sonar|voicemeeter|vb-audio|cable|obs|ndi|anydesk|steam streaming|loopback/i;
-  let smartId = null; // cached pick; invalidated on device changes
+  const PROBE_MS = 700;           // long enough to catch a device that never wakes
+  const PROBE_SILENCE = 0.00005;  // a live mic's raw noise floor clears this; a dead device returns exact 0
+  let goodId = null;             // verified working deviceId ('' = system default)
+  let probing = null;            // in-flight probe promise (dedupe)
+
   try {
-    navigator.mediaDevices.addEventListener('devicechange', () => { smartId = null; });
+    navigator.mediaDevices.addEventListener('devicechange', () => { goodId = null; });
   } catch (_) { /* older API — cache just lives longer */ }
 
-  async function pickRealMicId() {
-    if (smartId !== null) return smartId;
+  async function listInputs() {
     let devices = [];
-    try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch (_) { return (smartId = ''); }
-    // Labels unlock only after one successful getUserMedia — poke if needed.
+    try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch (_) { return []; }
     if (devices.length && devices.every((d) => !d.label)) {
+      // Labels unlock only after one successful getUserMedia — poke once.
       try {
         const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
         tmp.getTracks().forEach((t) => t.stop());
         devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
-      } catch (_) { return (smartId = ''); }
+      } catch (_) { /* keep unlabeled list */ }
     }
-    const named = devices.filter((d) => d.label && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
-    const real = named.filter((d) => !VIRTUAL_RX.test(d.label));
-    // Among real mics prefer obvious hardware names; else first real; else give up (system default).
-    const preferred = real.find((d) => /array|realtek|intel|usb|headset|webcam|camera/i.test(d.label)) || real[0];
-    smartId = preferred ? preferred.deviceId : '';
-    return smartId;
+    return devices;
+  }
+
+  // Open one device and report its peak level over PROBE_MS.
+  // Probing uses RAW audio on purpose: noiseSuppression zeroes out a quiet room,
+  // which makes every microphone look dead. With the processing off, a live mic
+  // always shows its analogue noise floor (~0.001+) while a dead device (idle
+  // Bluetooth, unconfigured virtual driver) returns literal digital zero.
+  async function probe(deviceId) {
+    let stream = null, ctx = null;
+    try {
+      const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
+      if (deviceId) audio.deviceId = { exact: deviceId };
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
+      ctx = new AudioContext();
+      if (ctx.state === 'suspended') await ctx.resume();
+      const an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      ctx.createMediaStreamSource(stream).connect(an);
+      const data = new Float32Array(an.fftSize);
+      let peak = 0;
+      const until = Date.now() + PROBE_MS;
+      while (Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 50));
+        an.getFloatTimeDomainData(data); // float: resolves the tiny noise floor a byte view rounds to zero
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i]);
+          if (v > peak) peak = v;
+        }
+      }
+      return peak;
+    } catch (_) {
+      return -1; // could not open
+    } finally {
+      try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      try { if (ctx) await ctx.close(); } catch (_) {}
+    }
+  }
+
+  // Probe candidates in a sensible order and cache the first that hears anything.
+  function findWorkingMic() {
+    if (probing) return probing;
+    probing = (async () => {
+      const devices = await listInputs();
+      const named = devices.filter((d) => d.label && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+      const real = named.filter((d) => !VIRTUAL_RX.test(d.label));
+      const ordered = [];
+      // built-in/wired hardware first (a docked-but-idle Bluetooth headset is the
+      // classic silent device), then any other real mic, then the system default
+      real.filter((d) => /array|realtek|intel|usb|webcam|camera/i.test(d.label)).forEach((d) => ordered.push(d));
+      real.forEach((d) => { if (ordered.indexOf(d) === -1) ordered.push(d); });
+      let best = { id: null, peak: -1, label: '' };
+      for (const d of ordered) {
+        const peak = await probe(d.deviceId);
+        if (peak > best.peak) best = { id: d.deviceId, peak: peak, label: d.label };
+        if (peak > PROBE_SILENCE) break; // live: it shows a real noise floor
+      }
+      // The system default is only a fallback, and only when it is NOT a virtual
+      // device: on this machine Windows' default is a virtual mixer mic that opens
+      // fine and then delivers pure silence, which is what "Bol can't hear me" was.
+      if (best.peak <= PROBE_SILENCE) {
+        const sysIsVirtual = named.length > 0 && real.length < named.length &&
+          !real.some((d) => d.deviceId === 'default');
+        if (!sysIsVirtual || real.length === 0) {
+          const sys = await probe('');
+          if (sys > best.peak) best = { id: '', peak: sys, label: 'system default' };
+        }
+        if (best.id === null && real.length) best = { id: real[0].deviceId, peak: 0, label: real[0].label + ' (unverified)' };
+      }
+      goodId = best.id === null ? '' : best.id;
+      bol.send('mic:picked', { label: best.label || 'system default', peak: Math.round(best.peak * 100000) / 100000, deviceId: goodId });
+      return goodId;
+    })().catch(() => (goodId = '')).then((v) => { probing = null; return v; });
+    return probing;
   }
 
   async function getStream(deviceId) {
     const audio = baseAudioConstraints();
     let wantExact = deviceId && deviceId !== 'default';
     if (wantExact) {
-      audio.deviceId = { exact: deviceId };
+      audio.deviceId = { exact: deviceId }; // the user picked this one explicitly — honour it
+    } else if (goodId) {
+      audio.deviceId = { exact: goodId };   // verified to actually produce audio
+      wantExact = true;
     } else {
-      const real = await pickRealMicId();
-      if (real) { audio.deviceId = { exact: real }; wantExact = true; }
+      // Never make the user wait on a probe: open the system default now and let
+      // the probe run in the background so the NEXT capture uses a verified mic.
+      findWorkingMic();
     }
     try {
       return await navigator.mediaDevices.getUserMedia({ audio });
@@ -92,7 +169,8 @@
       // fall back to the system default rather than failing the dictation.
       const n = (err && err.name) || '';
       if (wantExact && (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError' || n === 'NotFoundError')) {
-        smartId = null;
+        goodId = null;
+        findWorkingMic();
         return navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints() });
       }
       throw err;
@@ -125,7 +203,7 @@
         channelInterpretation: 'speakers',
       });
 
-      const session = { stream, ctx, source, gain, node, closed: false, onStopped: null };
+      const session = { stream, ctx, source, gain, node, closed: false, onStopped: null, peakRms: 0, deviceId: (audioTrackId(stream) || '') };
 
       node.port.onmessage = (e) => {
         const msg = e.data;
@@ -137,6 +215,7 @@
         }
         if (!msg || msg.type !== 'frame' || session.closed) return;
         if (msg.buffer && msg.buffer.byteLength > 0) bol.send('audio:chunk', msg.buffer);
+        if ((msg.rms || 0) > session.peakRms) session.peakRms = msg.rms;
         const now = Date.now();
         if (now - lastLevelTs >= 60) {
           lastLevelTs = now;
@@ -167,10 +246,26 @@
     }
   }
 
+  function audioTrackId(stream) {
+    try {
+      const t = stream.getAudioTracks()[0];
+      const s = t && t.getSettings ? t.getSettings() : null;
+      return (s && s.deviceId) || '';
+    } catch (_) { return ''; }
+  }
+
   async function stopRecording() {
     const s = rec;
     if (!s) return; // idempotent
     rec = null;
+    // A session that produced digital silence means the device we used is dead
+    // (idle Bluetooth headset, unconfigured virtual mic). Drop it from the cache
+    // and re-probe in the background so the next dictation uses a live mic.
+    if (s.peakRms < 0.0015) {
+      if (goodId && goodId === s.deviceId) goodId = null;
+      bol.send('audio:silent', { deviceId: s.deviceId });
+      findWorkingMic();
+    }
     // Ask the worklet to flush its partial tail frame, then wait for its
     // 'stopped' ack (port messages are ordered, so the tail frame lands
     // first). Time out defensively in case the audio thread is already gone.
@@ -230,4 +325,10 @@
       .then((list) => bol.send('mic:devices', list))
       .catch(() => bol.send('mic:devices', []));
   });
+
+  bol.on('mic:reprobe', () => { goodId = null; findWorkingMic(); });
+
+  // Find a mic that actually hears something now, while the user is nowhere near
+  // pressing the hotkey — so the very first dictation already uses a live device.
+  setTimeout(function () { findWorkingMic(); }, 1500);
 })();

@@ -116,7 +116,22 @@ async function startCapture(mode, via) {
     });
   } catch (e) { return onPipelineError(null, e); }
 
-  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel };
+  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel, warned: false };
+
+  // EARLY mic check — tell the user within ~1.2s that nothing is being heard,
+  // instead of letting them talk for a minute and only finding out at the end.
+  // Re-checks every second so the warning clears the moment audio appears.
+  const watched = current;
+  const micWatch = setInterval(() => {
+    if (state !== S.LISTENING || current !== watched) return clearInterval(micWatch);
+    if ((watched.maxLevel || 0) < 0.02) {
+      watched.warned = true;
+      hudSend({ state: 'listening', message: '⚠ Not hearing you — check your mic (Settings)' });
+    } else if (watched.warned) {
+      watched.warned = 'recovered';
+      hudSend({ state: 'listening', message: '' });
+    }
+  }, 1200);
   // Hand the buffered first words to the session in order.
   for (const b of preBuffer) { current.chunks++; try { sess.feed(b); } catch {} }
   preBuffer = [];
@@ -237,16 +252,16 @@ async function onFinal(sess, raw) {
     analytics.record({ words: wordCount, durationMs, app: ctx.app });
     state = S.IDLE; tray.setState('idle');
 
-    // Partial-capture warning: a long recording that produced very few words
-    // (or barely-audible input) means the mic missed most of the speech. The
-    // text still pasted — but tell the user WHY it came out short.
+    // Partial-capture note. The LIVE warning above is the primary signal (it fires
+    // ~1.2s in, while the user can still react); this only covers the case where
+    // audio was present but speech still came out sparse, and is skipped entirely
+    // if the user was already warned during the recording.
     const secs = durationMs / 1000;
     const sparse = secs > 5 && (wordCount / secs) < 0.8;
-    const quiet = (ctx.maxLevel || 0) < 0.06;
-    if (sparse || quiet) {
-      log('unclear-audio warning: words/s =', (wordCount / secs).toFixed(2), 'maxLevel =', (ctx.maxLevel || 0).toFixed(3));
-      hudSend({ state: 'error', message: "Couldn't hear parts of that — speak closer, or pick the right mic in Settings" });
-      setTimeout(() => hudSend({ state: 'idle' }), 3500);
+    if (sparse && !ctx.warned) {
+      log('sparse-speech note: words/s =', (wordCount / secs).toFixed(2), 'maxLevel =', (ctx.maxLevel || 0).toFixed(3));
+      hudSend({ state: 'error', message: 'Only caught part of that — try speaking a little closer' });
+      setTimeout(() => hudSend({ state: 'idle' }), 3000);
     } else {
       hudSend({ state: 'idle' });
     }
@@ -330,6 +345,11 @@ function registerIpc() {
     if (process.env.BOL_DEBUG) log('mics:', JSON.stringify((devices || []).map(d => d.label || d.deviceId)));
     if (micPending) { micPending(devices || []); micPending = null; }
   });
+  // Which device the probe verified as actually producing audio.
+  ipcMain.on('mic:picked', (e, info) => log('mic verified:', (info && info.label) || '?', 'peak=' + ((info && info.peak) || 0)));
+  // A session came back as digital silence: the recorder has already dropped that
+  // device and re-probed, so just record it.
+  ipcMain.on('audio:silent', (e, info) => log('SILENT session on device', (info && info.deviceId) || '(default)', '— re-probing mics'));
 
   ipcMain.handle('history:list', (e, q) => store.history.list(q || {}));
   ipcMain.handle('history:delete', (e, id) => store.history.delete(id));
@@ -481,7 +501,12 @@ if (!gotLock) { app.quit(); } else {
       // Optional QA: `--exec "<js>"` runs JS in the dashboard renderer before the
       // capture (used to drive UI flows automatically) and prints its result.
       const execIdx = process.argv.indexOf('--exec');
-      const execJs = execIdx !== -1 ? process.argv[execIdx + 1] : null;
+      const execFileIdx = process.argv.indexOf('--exec-file'); // avoids shell quoting mangling
+      let execJs = execIdx !== -1 ? process.argv[execIdx + 1] : null;
+      if (execFileIdx !== -1) {
+        try { execJs = require('fs').readFileSync(process.argv[execFileIdx + 1], 'utf8'); }
+        catch (e) { console.error('EXEC FILE READ FAIL: ' + e.message); }
+      }
       const run = async () => {
         if (execJs) {
           await new Promise((r) => setTimeout(r, 2500));
