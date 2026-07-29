@@ -360,7 +360,10 @@ if (!gotLock) { app.quit(); } else {
     analytics.init(paths);
 
     const bootReport = { injector: 'ok', hotkeys: 'ok' };
-    try { injector.init(path.join(__dirname, 'helper', 'winhelper.ps1')); }
+    // powershell.exe cannot read from inside app.asar — in packaged builds the
+    // helper is asarUnpacked, so point at the unpacked copy.
+    const helperPath = path.join(__dirname, 'helper', 'winhelper.ps1').replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+    try { injector.init(helperPath); }
     catch (e) { bootReport.injector = 'failed: ' + e.message; console.error('[bol] injector init failed', e); }
 
     createWindows();
