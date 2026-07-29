@@ -31,7 +31,19 @@
 
   // ---------- capture ----------
   function baseAudioConstraints() {
-    return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    // Tuned for speech RECOGNITION, not for calls:
+    // - echoCancellation OFF: there is no far-end to cancel while dictating, and
+    //   the AEC filter audibly colours the mic signal.
+    // - autoGainControl OFF: it pumps level mid-sentence, which smears the quiet
+    //   consonants Whisper relies on (Bol has its own fixed gain setting).
+    // - noiseSuppression ON: steady room/fan noise genuinely hurts accuracy.
+    return {
+      echoCancellation: false,
+      noiseSuppression: true,
+      autoGainControl: false,
+      channelCount: 1,
+      sampleRate: 48000,
+    };
   }
 
   // Virtual audio devices (SteelSeries Sonar, OBS, Voicemeeter, VB-Cable, NDI…)

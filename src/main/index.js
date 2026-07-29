@@ -177,6 +177,16 @@ async function onFinal(sess, raw) {
   const durationMs = Date.now() - ctx.startTs;
   raw = (raw || '').trim();
   log('onFinal: raw len', raw.length, JSON.stringify(raw).slice(0, 100), 'maxLevel', (ctx.maxLevel || 0).toFixed(3));
+  // BOL_DEBUG only: keep the exact audio the recogniser heard, so a bad
+  // transcription can be reproduced and A/B tested offline instead of guessed at.
+  if (process.env.BOL_DEBUG && ctx.pcm && ctx.pcm.length) {
+    try {
+      const wav = require('./stt/wav').pcm16ToWav(ctx.pcm, 16000);
+      const p = path.join(app.getPath('userData'), 'last-dictation.wav');
+      require('fs').writeFileSync(p, wav);
+      log('audio saved for debugging:', p, wav.length, 'bytes');
+    } catch (e) { log('wav dump failed', e.message); }
+  }
 
   // Whisper emits bracketed sentinels and stock hallucinations ("you",
   // "Thank you.") on silent/near-silent audio — never paste those.
@@ -349,7 +359,9 @@ function registerIpc() {
     if (current) {
       current.chunks++;
       if (current.chunks === 1 || current.chunks % 20 === 0) log('audio chunks:', current.chunks);
-      try { current.session.feed(Buffer.from(buf)); } catch (err) { log('feed error', err.message); }
+      const chunk = Buffer.from(buf);
+      if (process.env.BOL_DEBUG) { if (!current.pcm) current.pcm = []; current.pcm.push(chunk); }
+      try { current.session.feed(chunk); } catch (err) { log('feed error', err.message); }
     } else if (preBuffer.length < 100) {
       // session still being created — keep the first words (up to ~10s)
       preBuffer.push(Buffer.from(buf));

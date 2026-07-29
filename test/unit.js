@@ -80,6 +80,43 @@ t('flags real non-Latin script', () => {
   assert.strictEqual(cleanup.looksNonEnglish('کل صبح ڈیمو تیار ہے'), true);
 });
 
+console.log('worklet Resampler (anti-aliasing — protects consonant cues)');
+const { Resampler } = require('../src/renderer/recorder/worklet.js');
+function resample(src, signal, withFilter) {
+  const out = [];
+  const r = new Resampler(src, (s) => out.push(s));
+  if (!withFilter) r.filters = null; // reproduce an unfiltered decimator
+  for (let i = 0; i < signal.length; i += 128) r.push(signal.subarray(i, Math.min(i + 128, signal.length)));
+  return Float32Array.from(out);
+}
+function goertzel(sig, f, rate) {
+  const w = 2 * Math.PI * f / rate, c = 2 * Math.cos(w);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < sig.length; i++) { const s = sig[i] + c * s1 - s2; s2 = s1; s1 = s; }
+  return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - c * s1 * s2)) / sig.length * 2;
+}
+t('48k->16k decimation suppresses out-of-band content instead of aliasing it', () => {
+  const SRC = 48000, N = SRC;
+  const x = new Float32Array(N);
+  // 1 kHz (keep) + 11 kHz (must be removed; unfiltered it folds to 16000-11000 = 5 kHz)
+  for (let i = 0; i < N; i++) x[i] = 0.4 * Math.sin(2 * Math.PI * 1000 * i / SRC) + 0.4 * Math.sin(2 * Math.PI * 11000 * i / SRC);
+  const filtered = resample(SRC, x, true);
+  const speech = goertzel(filtered, 1000, 16000);
+  const alias = goertzel(filtered, 5000, 16000);
+  assert(speech > 0.3, 'speech band must survive, got ' + speech.toFixed(4));
+  assert(alias / speech < 0.15, 'alias must be <15% of speech, got ' + (100 * alias / speech).toFixed(1) + '%');
+  // and prove the unfiltered path really was broken (guards against silent removal)
+  const raw = resample(SRC, x, false);
+  assert(goertzel(raw, 5000, 16000) / goertzel(raw, 1000, 16000) > 0.5, 'unfiltered decimation should alias badly');
+});
+t('outputs the expected sample count and passes 16k through untouched', () => {
+  const SRC = 48000, N = 48000;
+  const x = new Float32Array(N).fill(0.1);
+  assert(Math.abs(resample(SRC, x, true).length - 16000) <= 2, 'should emit ~16000 samples for 1s');
+  const y = resample(16000, new Float32Array(16000).fill(0.25), true);
+  assert(Math.abs(y.length - 16000) <= 2 && Math.abs(y[8000] - 0.25) < 1e-6, 'no resampling at 16k');
+});
+
 console.log('wav.pcm16ToWav');
 const wav = require('../src/main/stt/wav');
 t('valid RIFF header for 16k mono pcm16', () => {

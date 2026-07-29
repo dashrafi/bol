@@ -149,11 +149,12 @@
         detail.appendChild(field('Model', input(cfg.stt.openaiModel, 'whisper-large-v3-turbo', function (v) { patch({ stt: { openaiModel: v } }, true); })));
       } else {
         detail.appendChild(field('Local model', select(cfg.stt.localModel, [
-          { v: 'onnx-community/whisper-tiny', t: 'tiny — fastest, lowest accuracy' },
-          { v: 'onnx-community/whisper-base', t: 'base — balanced (recommended)' },
-          { v: 'onnx-community/whisper-small', t: 'small — slower, more accurate' },
+          { v: 'onnx-community/whisper-tiny', t: 'tiny — fastest, least accurate (~40MB)' },
+          { v: 'onnx-community/whisper-base', t: 'base — fast (~75MB)' },
+          { v: 'onnx-community/whisper-small', t: 'small — accurate, recommended (~500MB)' },
+          { v: 'onnx-community/whisper-medium-ONNX', t: 'medium — most accurate, slowest (~1.5GB)' },
         ], function (v) { patch({ stt: { localModel: v } }); })));
-        detail.appendChild(h('div', { class: 'st-desc', text: 'Runs on your PC — free, no key, works offline. First use downloads the model (~75MB for base) once.' }));
+        detail.appendChild(h('div', { class: 'st-desc', text: 'Runs on your PC — free, no key, works offline. Each model downloads once on first use. Bigger = better with names, accents and technical words, but slower per dictation.' }));
       }
       detail.appendChild(field('Language', select(cfg.stt.language, [
         { v: 'auto', t: 'Auto-detect' }, { v: 'en', t: 'English' }, { v: 'ur', t: 'Urdu' },

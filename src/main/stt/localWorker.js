@@ -160,7 +160,12 @@ async function handleRun(msg) {
     if (abortedIds.has(id)) return;
 
     post({ type: 'progress', id, message: 'Transcribing…' });
-    const options = { chunk_length_s: 30 };
+    // Whisper only sees 30 s at a time. Long dictation is split into chunks, and
+    // without OVERLAP (stride) the words sitting on a chunk boundary get cut in
+    // half and mis-heard. stride_length_s makes neighbouring chunks share 5 s of
+    // audio on each side so every word is transcribed with full context.
+    const baseOptions = { chunk_length_s: 30, stride_length_s: 5 };
+    const options = Object.assign({}, baseOptions);
     if (msg.language) options.language = String(msg.language);
     let out;
     try {
@@ -169,7 +174,7 @@ async function handleRun(msg) {
       // English-only checkpoints (e.g. whisper-*.en) reject a language option —
       // retry once without it instead of failing the dictation.
       if (!options.language) throw err;
-      out = await asr(float32, { chunk_length_s: 30 });
+      out = await asr(float32, baseOptions);
     }
     if (abortedIds.has(id)) return;
 
