@@ -10,7 +10,7 @@ const INVOKE = new Set([
   'snippets:list', 'snippets:add', 'snippets:remove',
   'analytics:get', 'app:version', 'test:stt', 'test:cleanup', 'insert:text',
 ]);
-const SEND = new Set(['audio:chunk', 'audio:level', 'audio:error', 'audio:silent', 'mic:devices', 'mic:picked', 'hud:cancel']);
+const SEND = new Set(['audio:chunk', 'audio:level', 'audio:error', 'audio:silent', 'mic:devices', 'mic:picked', 'mic:stale', 'hud:cancel']);
 const ON = new Set(['hud:state', 'settings:changed', 'rec:start', 'rec:stop', 'mic:enumerate', 'mic:reprobe']);
 
 contextBridge.exposeInMainWorld('bol', {

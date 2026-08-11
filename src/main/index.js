@@ -350,6 +350,16 @@ function registerIpc() {
   // A session came back as digital silence: the recorder has already dropped that
   // device and re-probed, so just record it.
   ipcMain.on('audio:silent', (e, info) => log('SILENT session on device', (info && info.deviceId) || '(default)', '— re-probing mics'));
+  // The saved microphone no longer exists (e.g. a Bluetooth headset that left
+  // Hands-Free mode). Clear it so Settings stops pointing at a missing device and
+  // Bol goes back to auto-picking a verified one.
+  ipcMain.on('mic:stale', (e, info) => {
+    const id = info && info.deviceId;
+    if (!id || config.get().mic.deviceId !== id) return;
+    log('saved mic is gone — reverting to auto-select');
+    config.set({ mic: { deviceId: 'default' } });
+    broadcast('settings:changed', config.get());
+  });
 
   ipcMain.handle('history:list', (e, q) => store.history.list(q || {}));
   ipcMain.handle('history:delete', (e, id) => store.history.delete(id));

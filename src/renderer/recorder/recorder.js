@@ -165,13 +165,19 @@
     try {
       return await navigator.mediaDevices.getUserMedia({ audio });
     } catch (err) {
-      // The chosen device may have been unplugged since it was selected —
-      // fall back to the system default rather than failing the dictation.
+      // The chosen device is gone (a Bluetooth headset leaving Hands-Free mode
+      // disappears exactly like this). Do NOT blindly fall back to the system
+      // default — on this machine that is a virtual mixer mic that returns pure
+      // silence. Fall back to a PROBED, verified device and tell main to clear
+      // the stale setting so Settings stops pointing at a device that is gone.
       const n = (err && err.name) || '';
       if (wantExact && (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError' || n === 'NotFoundError')) {
         goodId = null;
-        findWorkingMic();
-        return navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints() });
+        if (deviceId && deviceId !== 'default') bol.send('mic:stale', { deviceId: deviceId });
+        const verified = await findWorkingMic();
+        const retry = baseAudioConstraints();
+        if (verified) retry.deviceId = { exact: verified };
+        return navigator.mediaDevices.getUserMedia({ audio: retry });
       }
       throw err;
     }
