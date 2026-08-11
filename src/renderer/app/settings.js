@@ -308,11 +308,25 @@
   // simple view because it is the single control that fixes most problems.
   function micPickerRow() {
     var sel = h('select', { class: 'st-sel' });
-    sel.appendChild(h('option', { value: 'default', text: 'System default' }));
-    invoke('mic:list').then(function (devs) {
-      (devs || []).forEach(function (d) { var o = h('option', { value: d.deviceId, text: d.label || 'Microphone' }); if (d.deviceId === cfg.mic.deviceId) o.selected = true; sel.appendChild(o); });
-      if (cfg.mic.deviceId === 'default') sel.value = 'default';
-    }).catch(function () {});
+    function fill() {
+      var keep = sel.value;
+      invoke('mic:list').then(function (devs) {
+        sel.innerHTML = '';
+        sel.appendChild(h('option', { value: 'default', text: 'System default' }));
+        (devs || []).forEach(function (d) {
+          sel.appendChild(h('option', { value: d.deviceId, text: d.label || 'Microphone' }));
+        });
+        sel.value = (keep && keep !== 'default') ? keep : (cfg.mic.deviceId || 'default');
+        if (!sel.value) sel.value = 'default';
+      }).catch(function () {});
+    }
+    fill();
+    // Bluetooth headsets only expose their mic once Windows switches them to the
+    // Hands-Free profile, and USB mics come and go — refresh the list live so a
+    // device that appears later shows up without restarting Bol.
+    try {
+      navigator.mediaDevices.addEventListener('devicechange', function () { fill(); });
+    } catch (_) { /* older API */ }
     sel.addEventListener('change', function () { patch({ mic: { deviceId: sel.value } }); });
 
     // Live mic test — the only reliable way to know which device hears YOU
