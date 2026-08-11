@@ -304,11 +304,9 @@
     return sec;
   }
 
-  function micSection() {
-    var sec = h('div', { class: 'st-sec' }, [
-      h('h2', { text: 'Microphone' }),
-      h('div', { class: 'st-desc', text: 'Input device and gain. Whisper mode boosts quiet speech.' }),
-    ]);
+  // Device picker + live "does it actually hear me" test, as one row. Lives in the
+  // simple view because it is the single control that fixes most problems.
+  function micPickerRow() {
     var sel = h('select', { class: 'st-sel' });
     sel.appendChild(h('option', { value: 'default', text: 'System default' }));
     invoke('mic:list').then(function (devs) {
@@ -316,7 +314,6 @@
       if (cfg.mic.deviceId === 'default') sel.value = 'default';
     }).catch(function () {});
     sel.addEventListener('change', function () { patch({ mic: { deviceId: sel.value } }); });
-    sec.appendChild(field('Device', sel));
 
     // Live mic test — the only reliable way to know which device hears YOU
     // (probing can't tell a quiet room from a dead device, and laptop arrays
@@ -364,12 +361,19 @@
         meterMsg.textContent = '✗ ' + (e && e.name === 'NotAllowedError' ? 'Mic permission denied' : (e && e.message) || 'could not open');
       });
     });
-    sec.appendChild(h('div', { class: 'st-field' }, [
-      h('label', { class: 'st-lbl', text: 'Check this mic actually hears you' }),
-      h('div', { class: 'st-inline' }, [testMicBtn, meterBox]),
+    return h('div', { class: 'st-field' }, [
+      h('label', { class: 'st-lbl', text: 'Microphone' }),
+      sel,
+      h('div', { class: 'st-inline', style: 'margin-top:8px' }, [testMicBtn, meterBox]),
       h('div', { class: 'st-inline', style: 'margin-top:6px' }, [meterMsg]),
-    ]));
+    ]);
+  }
 
+  function micSection() {
+    var sec = h('div', { class: 'st-sec' }, [
+      h('h2', { text: 'Microphone level' }),
+      h('div', { class: 'st-desc', text: 'Boost the input if you speak quietly. The device itself is picked at the top of this page.' }),
+    ]);
     var g = h('input', { class: 'st-range', type: 'range', min: '0.5', max: '3', step: '0.1', value: String(cfg.mic.gain || 1) });
     var gv = h('span', { class: 'l', text: (cfg.mic.gain || 1).toFixed(1) + '×', style: 'min-width:38px;text-align:right' });
     g.addEventListener('input', function () { gv.textContent = parseFloat(g.value).toFixed(1) + '×'; patch({ mic: { gain: parseFloat(g.value) } }, true); });
@@ -390,6 +394,67 @@
     return sec;
   }
 
+  // ---------------------------------------------------------------- simple view
+  // Bol works with zero configuration, so the default page shows only the four
+  // things a normal person actually changes. Everything technical (providers,
+  // keys, model ids, endpoints, tone rules) lives behind "Advanced settings".
+  var ACCURACY = [
+    { v: 'onnx-community/whisper-tiny', t: 'Fastest — quick notes' },
+    { v: 'onnx-community/whisper-base', t: 'Fast' },
+    { v: 'onnx-community/whisper-small', t: 'Accurate (recommended)' },
+    { v: 'onnx-community/whisper-medium-ONNX', t: 'Most accurate — slowest' },
+  ];
+
+  function simpleSection() {
+    var sec = h('div', { class: 'st-sec' }, [
+      h('h2', { text: 'Bol' }),
+      h('div', { class: 'st-desc', text: 'Hold your key, speak, release — Bol types it. Everything runs on this PC for free; nothing here needs setting up.' }),
+    ]);
+
+    // 1. Push-to-talk key — the one thing everyone needs to know
+    var pttBtn = h('button', { class: 'st-btn st-keybtn', type: 'button', text: (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9' });
+    pttBtn.addEventListener('click', function () {
+      if (pttBtn.classList.contains('arm')) return;
+      pttBtn.classList.add('arm'); pttBtn.textContent = 'Press a key…';
+      invoke('settings:captureHotkey').then(function (res) {
+        pttBtn.classList.remove('arm');
+        if (res && res.code) { pttBtn.textContent = res.label; patch({ hotkeys: { pushToTalk: { code: res.code, label: res.label } } }); }
+        else pttBtn.textContent = (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9';
+      }).catch(function () { pttBtn.classList.remove('arm'); pttBtn.textContent = (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9'; });
+    });
+    sec.appendChild(row('Your dictation key', 'Hold it and speak — or tap once to start, tap again to stop.', h('div', { class: 'st-key' }, [pttBtn])));
+
+    // 2. Microphone + the test that proves it hears you
+    sec.appendChild(micPickerRow());
+
+    // 3. Accuracy (hides the model-id detail)
+    sec.appendChild(row('Accuracy', 'Higher accuracy takes a little longer per dictation.',
+      select(cfg.stt.localModel, ACCURACY, function (v) { patch({ stt: { localModel: v } }); })));
+
+    // 4. Tidy up my words (hides provider/model/tone plumbing)
+    sec.appendChild(row('Tidy up my words', 'Removes “um”, fixes punctuation and capitalisation. Roman Urdu / Hinglish is never translated.',
+      toggle((cfg.cleanup.mode || 'full') !== 'off', function (v) { patch({ cleanup: { mode: v ? 'full' : 'off' } }); })));
+
+    return sec;
+  }
+
+  function advancedSection() {
+    var open = false;
+    var body = h('div', { style: 'display:none' });
+    var caret = h('span', { text: '▾', style: 'margin-left:6px' });
+    var head = h('button', { class: 'st-btn', type: 'button', style: 'margin:6px 0 0' }, [h('span', { text: 'Advanced settings' }), caret]);
+    head.addEventListener('click', function () {
+      open = !open;
+      body.style.display = open ? 'block' : 'none';
+      caret.textContent = open ? '▴' : '▾';
+      if (open && !body.childNodes.length) {
+        // built lazily so the simple page stays cheap
+        [sttSection(), cleanupSection(), hotkeysSection(), micSection(), privacySection()].forEach(function (s) { body.appendChild(s); });
+      }
+    });
+    return h('div', {}, [head, body]);
+  }
+
   var host = null;
   function render(el) {
     host = el;
@@ -399,8 +464,9 @@
     el.innerHTML = '';
     var wrap = h('div', { class: 'st' }, [
       h('h1', { text: 'Settings' }),
-      h('p', { class: 'st-lede', text: 'Bring your own keys. Pay providers at cost. No subscription.' }),
-      sttSection(), cleanupSection(), hotkeysSection(), micSection(), privacySection(),
+      h('p', { class: 'st-lede', text: 'Free, private, and already set up. Change a key or a mic — that’s it.' }),
+      simpleSection(),
+      advancedSection(),
     ]);
     el.appendChild(wrap);
   }
