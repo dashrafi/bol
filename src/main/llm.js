@@ -41,10 +41,48 @@ function endpointFor(c) {
     kind: 'openai',
     url: base + '/v1/chat/completions',
     key: '',
-    model: cc.ollamaModel || 'qwen2.5:3b',
+    model: cc.ollamaModel || 'auto',
     local: true,
     label: 'Ollama',
+    base,
   };
+}
+
+// Hardcoding one Ollama model means every machine that doesn't happen to have it
+// silently loses AI cleanup. 'auto' asks Ollama what IS installed and picks the
+// best instruction-following chat model available.
+const MODEL_PREFERENCE = [
+  /^qwen2\.5[:-]?(7b|14b|32b)/i, /^qwen3/i, /^llama3\.[12][:-]?(8b|70b)/i,
+  /^mistral/i, /^gemma2?[:-]?(9b|12b|27b)/i, /^qwen2\.5/i, /^llama3/i, /^phi/i, /^gemma/i,
+];
+let autoModelCache = { base: null, model: null, at: 0 };
+
+// Pure selection step, exported so it can be unit-tested without a live Ollama.
+function pickBestModel(names) {
+  const usable = (names || []).filter(Boolean).filter((n) => !/embed|bge|nomic|minilm/i.test(n));
+  if (!usable.length) return null;
+  for (const rx of MODEL_PREFERENCE) {
+    const hit = usable.find((n) => rx.test(n));
+    if (hit) return hit;
+  }
+  return usable[0];
+}
+
+async function resolveOllamaModel(base) {
+  const now = Date.now();
+  if (autoModelCache.base === base && autoModelCache.model && (now - autoModelCache.at) < 300000) return autoModelCache.model;
+  let names = [];
+  try {
+    const resp = await fetch(base + '/api/tags', { signal: AbortSignal.timeout(4000) });
+    if (resp.ok) {
+      const data = await resp.json();
+      names = (data && Array.isArray(data.models) ? data.models : []).map((m) => m && m.name).filter(Boolean);
+    }
+  } catch (e) { /* Ollama not running — caller falls back to the offline cleaner */ }
+  const chosen = pickBestModel(names);
+  if (!chosen) throw new Error('No Ollama model installed — install one (ollama pull qwen2.5:7b) or set cleanup to Offline');
+  autoModelCache = { base, model: chosen, at: now };
+  return chosen;
 }
 
 async function errText(resp, label) {
@@ -61,6 +99,7 @@ async function errText(resp, label) {
 // chat(cleanupCfg, systemPrompt, userText, {maxTokens, timeoutMs}) -> Promise<string>
 async function chat(c, system, user, opts) {
   const ep = endpointFor(c);
+  if (ep.local && (!ep.model || ep.model === 'auto')) ep.model = await resolveOllamaModel(ep.base);
   const maxTokens = (opts && opts.maxTokens) || 1024;
   const timeoutMs = (opts && opts.timeoutMs) || (ep.local ? 15000 : 8000);
   const controller = new AbortController();
@@ -109,10 +148,13 @@ async function test(c) {
   const ep = endpointFor(c);
   try {
     await chat(c, 'Reply with exactly: ok', 'ping', { maxTokens: 5, timeoutMs: ep.local ? 15000 : 8000 });
-    return { ok: true, provider: (c && c.provider) || 'ollama', model: ep.model };
+    // report the model actually used, not the literal 'auto'
+    let model = ep.model;
+    if (ep.local && (!model || model === 'auto')) { try { model = await resolveOllamaModel(ep.base); } catch (_) {} }
+    return { ok: true, provider: (c && c.provider) || 'ollama', model };
   } catch (e) {
     return { ok: false, error: (e && e.message) ? e.message : 'AI test failed' };
   }
 }
 
-module.exports = { chat, test, endpointFor };
+module.exports = { chat, test, endpointFor, pickBestModel };

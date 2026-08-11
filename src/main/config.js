@@ -42,14 +42,19 @@ function buildDefaults() {
       openaiKey: '',
       openaiBaseUrl: 'https://api.groq.com/openai/v1', // Groq free tier, OpenAI-compatible
       openaiModel: 'whisper-large-v3-turbo',
-      localModel: 'onnx-community/whisper-base',
+      // 'small' is the accuracy the Settings page calls "recommended": base makes
+      // audible word errors on natural speech. It downloads once (~500MB) and the
+      // HUD shows progress while it does.
+      localModel: 'onnx-community/whisper-small',
       language: 'auto',
     },
     cleanup: {
       mode: 'full', // 'full' (AI) | 'light' (offline regex) | 'off' (raw)
       provider: 'ollama', // 'ollama' (local, free, DEFAULT) | 'openai' | 'anthropic'
       ollamaUrl: 'http://127.0.0.1:11434',
-      ollamaModel: 'qwen2.5:3b',
+      // 'auto' = use the best model the user already has installed. Hardcoding one
+      // means every machine without that exact model silently loses AI cleanup.
+      ollamaModel: 'auto',
       openaiKey: '',
       openaiBaseUrl: 'https://api.groq.com/openai/v1', // Groq free tier
       openaiModel: 'llama-3.3-70b-versatile',

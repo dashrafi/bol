@@ -61,6 +61,18 @@ t('openai provider defaults to Groq free endpoint, needs key', () => {
   assert(/api\.groq\.com\/openai\/v1\/chat\/completions$/.test(ep.url), ep.url);
   assert.strictEqual(ep.local, false);
 });
+t('auto-picks the best installed Ollama model (never a hardcoded one)', () => {
+  // a machine with a big and a small qwen: prefer the bigger instruct model
+  assert.strictEqual(llm.pickBestModel(['qwen2.5:1.5b', 'qwen2.5:7b']), 'qwen2.5:7b');
+  // llama-only machine still works
+  assert.strictEqual(llm.pickBestModel(['llama3.1:8b']), 'llama3.1:8b');
+  // embedding models can't chat and must never be chosen
+  assert.strictEqual(llm.pickBestModel(['nomic-embed-text:latest']), null);
+  assert.strictEqual(llm.pickBestModel(['nomic-embed-text', 'mistral:7b']), 'mistral:7b');
+  // unknown model names are still usable rather than failing outright
+  assert.strictEqual(llm.pickBestModel(['some-custom-model:latest']), 'some-custom-model:latest');
+  assert.strictEqual(llm.pickBestModel([]), null);
+});
 t('anthropic provider routes to messages API', () => {
   const ep = llm.endpointFor({ provider: 'anthropic', anthropicKey: 'k' });
   assert.strictEqual(ep.kind, 'anthropic');
