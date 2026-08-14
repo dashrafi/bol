@@ -308,6 +308,35 @@
   // simple view because it is the single control that fixes most problems.
   function micPickerRow() {
     var sel = h('select', { class: 'st-sel' });
+    var btHint = h('div', { class: 'st-desc', style: 'display:none;margin-top:8px;color:#ffcf8a' });
+
+    // Bluetooth headphones connected for playback expose NO microphone while they
+    // are in A2DP (music) mode — Windows only creates the mic endpoint in the
+    // Hands-Free profile. Users see their headset missing from this list and
+    // assume Bol is broken, so say it plainly instead.
+    function checkBluetoothMic() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      navigator.mediaDevices.enumerateDevices().then(function (devs) {
+        var inputs = devs.filter(function (d) { return d.kind === 'audioinput'; }).map(function (d) { return (d.label || '').toLowerCase(); });
+        var missing = null;
+        devs.filter(function (d) { return d.kind === 'audiooutput' && d.label; }).forEach(function (d) {
+          var m = /\(([^)]+)\)\s*$/.exec(d.label);           // "Headphones (WH-1000XM6)" -> WH-1000XM6
+          var name = m ? m[1] : null;
+          if (!name || /realtek|intel|nvidia|display|speakers|virtual|sonar/i.test(name)) return;
+          var has = inputs.some(function (l) { return l.indexOf(name.toLowerCase()) >= 0; });
+          if (!has) missing = name;
+        });
+        if (missing) {
+          btHint.innerHTML = '🎧 <b>' + missing + '</b> is connected for sound only — Bluetooth headphones expose no microphone in music mode, so Windows isn\'t offering it here. ' +
+            'To use its mic: Control Panel → Devices and Printers → right-click ' + missing + ' → Properties → Services → tick <b>Handsfree Telephony</b>. ' +
+            'Note that switching drops playback to call quality, and its mic is lower quality for dictation than your laptop mic.';
+          btHint.style.display = 'block';
+        } else {
+          btHint.style.display = 'none';
+        }
+      }).catch(function () {});
+    }
+
     function fill() {
       var keep = sel.value;
       invoke('mic:list').then(function (devs) {
@@ -318,6 +347,7 @@
         });
         sel.value = (keep && keep !== 'default') ? keep : (cfg.mic.deviceId || 'default');
         if (!sel.value) sel.value = 'default';
+        checkBluetoothMic();
       }).catch(function () {});
     }
     fill();
@@ -378,6 +408,7 @@
     return h('div', { class: 'st-field' }, [
       h('label', { class: 'st-lbl', text: 'Microphone' }),
       sel,
+      btHint,
       h('div', { class: 'st-inline', style: 'margin-top:8px' }, [testMicBtn, meterBox]),
       h('div', { class: 'st-inline', style: 'margin-top:6px' }, [meterMsg]),
     ]);
