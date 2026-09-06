@@ -241,6 +241,45 @@ t('a UTF-8 BOM does not wipe saved settings', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+console.log('stt.localWorker dictionary prompt');
+const lw = require('../src/main/stt/localWorker');
+// A fake Whisper generation_config with the real whisper-small token ids.
+const GC = { prev_sot_token_id: 50361, decoder_start_token_id: 50258, no_timestamps_token_id: 50363,
+  is_multilingual: true, lang_to_id: { '<|en|>': 50259, '<|ur|>': 50337, '<|hi|>': 50276 }, task_to_id: { transcribe: 50359, translate: 50358 } };
+t('promptTextFromWords dedupes, trims, caps at 40 words', () => {
+  assert.strictEqual(lw.promptTextFromWords(['Bol', ' Wispr  Flow ', 'bol', '', null, 'PakWheels']), 'Bol, Wispr Flow, PakWheels');
+  const many = Array.from({ length: 80 }, (_, i) => 'w' + i);
+  assert.strictEqual(lw.promptTextFromWords(many).split(', ').length, lw.PROMPT_MAX_WORDS);
+  assert.strictEqual(lw.promptTextFromWords([]), '');
+  assert.strictEqual(lw.promptTextFromWords(null), '');
+});
+t('buildDecoderPrefix = <|startofprev|> prompt <|sot|> <|lang|> <|transcribe|> [<|notimestamps|>]', () => {
+  const b = lw.buildDecoderPrefix(GC, [11, 22, 33], 'en', false);
+  assert.deepStrictEqual(b.decoder_input_ids, [50361, 11, 22, 33, 50258, 50259, 50359, 50363]);
+  assert.strictEqual(b.prefixLength, 4); // everything before <|startoftranscript|>
+  const ts = lw.buildDecoderPrefix(GC, [11], 'ur', true);
+  assert.deepStrictEqual(ts.decoder_input_ids, [50361, 11, 50258, 50337, 50359]); // timestamps on: no <|notimestamps|>
+});
+t('buildDecoderPrefix falls back to English for unknown languages and skips lang/task on English-only models', () => {
+  assert.deepStrictEqual(lw.buildDecoderPrefix(GC, [5], 'xx', false).decoder_input_ids, [50361, 5, 50258, 50259, 50359, 50363]);
+  const en = Object.assign({}, GC, { is_multilingual: false });
+  assert.deepStrictEqual(lw.buildDecoderPrefix(en, [5], 'en', false).decoder_input_ids, [50361, 5, 50258, 50363]);
+  assert.strictEqual(lw.buildDecoderPrefix(GC, [], 'en', false), null);
+  assert.strictEqual(lw.buildDecoderPrefix({}, [1], 'en', false), null);
+});
+t('stripPromptRow drops the prompt so it can never leak into the transcript', () => {
+  const row = [50361, 11, 22, 50258, 50259, 50359, 50363, 700, 701, 702, 50257];
+  assert.deepStrictEqual(lw.stripPromptRow(row, 50258), [50258, 50259, 50359, 50363, 700, 701, 702, 50257]);
+  const plain = [50258, 50259, 700];
+  assert.strictEqual(lw.stripPromptRow(plain, 50258), plain); // no prompt: untouched
+});
+t('whisperLanguageCode: auto/multi mean "let the model default", codes pass through', () => {
+  assert.strictEqual(lw.whisperLanguageCode('auto'), null);
+  assert.strictEqual(lw.whisperLanguageCode('multi'), null);
+  assert.strictEqual(lw.whisperLanguageCode(''), null);
+  assert.strictEqual(lw.whisperLanguageCode('UR'), 'ur');
+});
+
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

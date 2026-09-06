@@ -9,7 +9,12 @@
 const path = require('path');
 
 const INSTALL_MSG = 'Local model support not installed — run: npm i @huggingface/transformers';
-const DEFAULT_MODEL = 'onnx-community/whisper-base';
+const DEFAULT_MODEL = 'onnx-community/whisper-small';
+
+// Dictionary words become a short Whisper decoder prompt ("Bol, Wispr Flow, …")
+// so proper nouns are spelled the way the user wrote them instead of the nearest
+// common word ("Bulk", "with spare flow"). Pure helper shared with the worker.
+const { promptTextFromWords } = require('./localWorker');
 
 let worker = null; // warm utilityProcess child
 let nextId = 1;
@@ -102,6 +107,7 @@ function createSession(cfg, dictionaryWords, handlers) {
   const sttCfg = (cfg && cfg.stt) || {};
   const model = sttCfg.localModel || DEFAULT_MODEL;
   const language = (sttCfg.language && sttCfg.language !== 'auto') ? String(sttCfg.language) : null;
+  const prompt = promptTextFromWords(dictionaryWords);
 
   const id = nextId++;
   const chunks = [];
@@ -156,7 +162,7 @@ function createSession(cfg, dictionaryWords, handlers) {
       });
 
       try {
-        child.postMessage({ type: 'run', id, pcm, model, language });
+        child.postMessage({ type: 'run', id, pcm, model, language, prompt });
       } catch (e) {
         pending.delete(id);
         settled = true;
