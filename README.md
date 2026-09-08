@@ -8,16 +8,32 @@ Wispr-Flow-class, but yours: **100% free, zero API keys, zero subscription, zero
 
 Out of the box Bol needs **no API keys and no signup**:
 
-- **Speech-to-text:** **local Whisper** on your PC (downloads a ~75MB model once, then fully offline).
-- **AI cleanup:** your **local Ollama** (`ollama pull qwen2.5:3b`) if it's running; otherwise an instant **offline regex cleaner**. Either way, $0.
+- **Speech-to-text:** **local Whisper** on your PC — 8-bit `whisper-small`, a ~250 MB one-time download, then fully offline. It loads at startup, not in the middle of your first dictation.
+- **AI cleanup:** your **local Ollama** if you have it. Bol picks whichever chat model you already have installed and **starts Ollama itself** if it is installed but not running. No Ollama? An instant **offline regex cleaner** takes over. Either way, $0.
 - **Roman Urdu / Hindi / Hinglish** is auto-routed to the offline cleaner so it's **never translated** — it comes out exactly as you spoke it.
 
 Want more speed/quality? Optional **free-tier cloud** (Groq for STT + cleanup) or paid providers (Deepgram, Anthropic) are a dropdown away — but never required.
 
+## ⚠️ Your antivirus will probably warn you. Here's why, honestly.
+
+Bol is **unsigned** (a code-signing certificate costs money), and to do its job it must:
+
+- install a **global keyboard hook** — that's how `F9` works in every app
+- **inject keystrokes** via `SendInput` from a PowerShell helper — that's how the text lands in your textbox
+- **read and write the clipboard** — that's how pasting works
+
+That combination is, behaviourally, indistinguishable from a keylogger, so heuristic scanners flag it. Nothing is infected and nothing phones home — but you should not take that on trust. Instead:
+
+- **Read the source.** It is all here, plain JavaScript, no bundler, no minification, ~7,000 lines.
+- **Check the network yourself.** The only outbound requests are the one-time model download and, if *you* configure a cloud provider, that provider. `Local only` mode in Settings hard-blocks even those.
+- **Build it yourself** with `npm install && npm run dist` instead of trusting a binary.
+
+Windows SmartScreen will also say "unknown publisher" → **More info → Run anyway**.
+
 ## Features
 
 - **Push-to-talk** (default `F9`) + **hands-free toggle** (`F10`) — works in any app
-- **AI auto-edits** — fillers, false starts, punctuation, capitalization fixed by Claude; raw and light (offline regex) modes too
+- **AI auto-edits** — fillers, false starts, punctuation and capitalization fixed by a local model; raw and light (offline regex) modes too
 - **Tone matching** — formal in Outlook, casual in Slack; per-app rules you control + custom instructions
 - **Command mode** (`F8`) — select text, hold, say *"make this more polite"* / *"bullet these"* — voice-edits in place; with nothing selected it generates
 - **Personal dictionary** — names/jargon spelled right, fed to the STT engine and the AI; auto-suggests from your history
@@ -32,7 +48,7 @@ Want more speed/quality? Optional **free-tier cloud** (Groq for STT + cleanup) o
 
 | Provider | Type | Notes |
 |---|---|---|
-| **Local Whisper** (default) | on-device | **free, no key, offline**; first run downloads the model |
+| **Local Whisper** (default) | on-device | **free, no key, offline**; ~250 MB one-time download, 8-bit weights (~1.3 GB RAM) |
 | **Groq / OpenAI** | batch cloud | Groq **free tier** (`whisper-large-v3-turbo`) or OpenAI (set base URL) |
 | **Deepgram** | streaming cloud | fastest feel — live partials while you speak (paid key) |
 
@@ -40,7 +56,7 @@ Want more speed/quality? Optional **free-tier cloud** (Groq for STT + cleanup) o
 
 | Engine | Type | Notes |
 |---|---|---|
-| **Ollama** (default) | local LLM | **free, no key**, runs on your PC; `ollama pull qwen2.5:3b` |
+| **Ollama** (default) | local LLM | **free, no key**, runs on your PC. Bol auto-detects your best installed model and starts Ollama if it is idle |
 | **Offline cleaner** | regex | automatic fallback if Ollama isn't running — zero deps, instant |
 | **Free cloud** | OpenAI-compatible | Groq (free tier) or Gemini / OpenAI (needs that free/paid key) |
 | **Anthropic** | Claude | optional, paid — not required |
@@ -56,11 +72,19 @@ npm start
 
 First run opens the onboarding wizard — with the defaults you just click through it (no keys). Then Bol lives in the tray.
 
-For the best free cleanup, install [Ollama](https://ollama.com) and run `ollama pull qwen2.5:3b` before first use. If Ollama isn't present, Bol falls back to the offline cleaner automatically.
+For the best free cleanup, install [Ollama](https://ollama.com) and pull any chat model (`ollama pull qwen2.5:7b`). Bol finds whichever model you have and starts the server itself when it is idle. If Ollama isn't installed at all, the offline cleaner takes over automatically.
 
 ```
-npm test        # unit tests
-npm run smoke   # headless boot check
+npm test         # unit tests
+npm run smoke    # headless boot check
+npm run dist     # build the Windows installer into dist/
+```
+
+Diagnostics (no Electron needed):
+
+```
+node src/main/stt/localWorker.js --file clip.wav --prompt "Bol, Wispr Flow"
+node test/bench-stt.js clip.wav --dtype q8 --runs 2
 ```
 
 ## Architecture

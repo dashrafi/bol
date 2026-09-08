@@ -20,6 +20,25 @@
       "buildResources": "build"
     },
     "npmRebuild": false,
+    "files": [
+      "**/*",
+      "!**/*.map",
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**",
+      "!node_modules/onnxruntime-web/dist/*.wasm",
+      "!node_modules/onnxruntime-web/dist/ort.all.*",
+      "!node_modules/onnxruntime-web/dist/ort.webgl.*",
+      "!node_modules/onnxruntime-web/dist/ort.webgpu.*",
+      "!node_modules/onnxruntime-web/dist/ort.bundle.*",
+      "!node_modules/onnxruntime-web/dist/ort.min.*",
+      "!node_modules/onnxruntime-web/dist/ort.mjs",
+      "!node_modules/onnxruntime-web/dist/ort.js",
+      "!node_modules/@huggingface/transformers/dist/transformers.web.*",
+      "!node_modules/@huggingface/transformers/dist/transformers.js",
+      "!node_modules/@huggingface/transformers/dist/transformers.min.js",
+      "!node_modules/@huggingface/transformers/dist/*.wasm"
+    ],
     "asarUnpack": [
       "**/*.node",
       "src/main/helper/**",
