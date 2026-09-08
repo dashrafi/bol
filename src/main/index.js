@@ -540,6 +540,35 @@ if (!gotLock) { app.quit(); } else {
       return;
     }
 
+    // Diagnostic: `Bol.exe --transcribe <file.wav>` runs a wav through the REAL
+    // configured STT path and prints the transcript. This is how a PACKAGED build
+    // is proven to still transcribe — reading the package can't show that, and the
+    // native ONNX binaries only resolve correctly inside the app's own asar.
+    const trIdx = process.argv.indexOf('--transcribe');
+    if (trIdx !== -1) {
+      const file = process.argv[trIdx + 1];
+      const started = Date.now();
+      try {
+        const { wavToPcm16 } = require('./stt/wav');
+        const { pcm, sampleRate, channels } = wavToPcm16(require('fs').readFileSync(file));
+        if (sampleRate !== 16000 || channels !== 1) console.error(`WARN wav is ${sampleRate} Hz / ${channels} ch; the pipeline feeds 16 kHz mono`);
+        const dict = store.dictionary.list().map((d) => d.word);
+        const cfg = effectiveConfig();
+        console.log(`TRANSCRIBE start provider=${cfg.stt.provider} model=${cfg.stt.localModel} bytes=${pcm.length} dict=${dict.length}`);
+        const sess = stt.createSession(cfg, dict, {
+          onPartial: (m) => console.error('[progress] ' + m),
+          onFinal: (text) => { console.log('TRANSCRIBE OK ' + (Date.now() - started) + 'ms rss=' + Math.round(process.memoryUsage().rss / 1048576) + 'MB'); console.log('TEXT: ' + text); quitting = true; app.exit(0); },
+          onError: (e) => { console.error('TRANSCRIBE FAIL ' + (e && e.message)); quitting = true; app.exit(1); },
+        });
+        sess.feed(pcm);
+        sess.end();
+      } catch (e) {
+        console.error('TRANSCRIBE FAIL ' + (e && e.message));
+        quitting = true; app.exit(1);
+      }
+      return;
+    }
+
     // Diagnostic: `electron . --capture <png>` renders the dashboard fully wired,
     // saves a screenshot, and exits. Used to verify the UI renders headlessly.
     const capIdx = process.argv.indexOf('--capture');

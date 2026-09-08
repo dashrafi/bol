@@ -23,6 +23,13 @@
     "files": [
       "**/*",
       "!**/*.map",
+      "!_backups/**",
+      "!_scratch/**",
+      "!dist/**",
+      "!.git/**",
+      "!.github/**",
+      "!**/*.wav",
+      "!**/*.png.bak",
       "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**",
