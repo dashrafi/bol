@@ -374,6 +374,11 @@ if (process.parentPort) {
     if (msg.type === 'run' && msg.id != null) {
       // Serialize: handleRun never rejects, so the chain cannot break.
       runChain = runChain.then(() => handleRun(msg));
+    } else if (msg.type === 'warm') {
+      // Load (or download) the model now so the first dictation does not wait for it.
+      runChain = runChain.then(() => getAsr(String(msg.model || 'onnx-community/whisper-small')).then(
+        () => log('warm: model ready'),
+        (err) => log('warm failed (will retry on next dictation):', err && err.message)));
     }
   });
 } else if (typeof require !== 'undefined' && require.main === module) {

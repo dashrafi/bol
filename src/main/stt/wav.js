@@ -43,4 +43,24 @@ function pcm16ToWav(buffers, sampleRate = 16000, channels = 1) {
   return Buffer.concat([header, data]);
 }
 
-module.exports = { pcm16ToWav };
+// Inverse for diagnostics (`Bol --transcribe clip.wav`): a RIFF/WAVE buffer →
+// { pcm: Buffer (PCM16LE), sampleRate, channels }. Throws on anything but PCM16.
+function wavToPcm16(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  if (b.length < 12 || b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE') throw new Error('not a RIFF/WAVE file');
+  let off = 12, sampleRate = 0, channels = 0, bits = 0, pcm = null;
+  while (off + 8 <= b.length) {
+    const id = b.toString('ascii', off, off + 4);
+    const size = b.readUInt32LE(off + 4);
+    const body = off + 8;
+    if (id === 'fmt ') { channels = b.readUInt16LE(body + 2); sampleRate = b.readUInt32LE(body + 4); bits = b.readUInt16LE(body + 14); }
+    if (id === 'data') { pcm = b.subarray(body, Math.min(body + size, b.length)); break; }
+    off = body + size + (size & 1);
+  }
+  if (!pcm || !sampleRate) throw new Error('wav has no fmt/data chunk');
+  if (bits !== 16) throw new Error('only 16-bit PCM wav is supported');
+  return { pcm: Buffer.from(pcm), sampleRate, channels };
+}
+
+module.exports = {
+  wavToPcm16, pcm16ToWav };

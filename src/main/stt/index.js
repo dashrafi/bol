@@ -64,4 +64,15 @@ async function test(cfg) {
   }
 }
 
-module.exports = { createSession, test };
+/**
+ * Ask the configured provider to get ready (load/download its model) so the next
+ * session starts warm. Cloud providers have nothing to warm. Never throws.
+ */
+function warm(cfg) {
+  try {
+    const mod = moduleFor(providerOf(cfg));
+    return typeof mod.warm === 'function' ? !!mod.warm(cfg) : false;
+  } catch (e) { return false; }
+}
+
+module.exports = { createSession, test, warm };

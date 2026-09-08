@@ -97,6 +97,8 @@ const history = {
         title: String(e.title || ''),
         durationMs: toInt(e.durationMs, 0),
         provider: String(e.provider || ''),
+        cleanup: String(e.cleanup || ''), // 'ai' | 'offline' | 'mixed-language' | 'ollama-down' | 'timeout' | ...
+        inserted: e.inserted !== false,   // false = it went to the clipboard instead of the app
         words: wordCount(e.polished),
       };
       historyEntries.unshift(rec);

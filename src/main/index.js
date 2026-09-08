@@ -35,6 +35,26 @@ function log(...a) {
   if (debugLogPath) { try { require('fs').appendFileSync(debugLogPath, line + '\n'); } catch {} }
 }
 
+// Which cleanup actually ran, recorded per dictation so "why wasn't my text
+// tidied up?" has an answer instead of a guess. 'ai' | 'offline' | a reason.
+function cleanupLabel(polished) {
+  if (!polished) return '';
+  if (polished.usedAI) return 'ai';
+  return polished.reason ? String(polished.reason) : 'offline';
+}
+
+// Load the local Whisper model and the local cleanup model before they are
+// needed. Called at boot and again on hotkey-down, so the model load overlaps
+// with the user speaking instead of being paid after they stop. Never throws.
+function warmModels(reason) {
+  const cfg = effectiveConfig();
+  try { stt.warm(cfg); } catch (e) { log('stt warm failed', e.message); }
+  Promise.resolve()
+    .then(() => cleanup.warm(cfg))
+    .then((r) => { if (r && r.ok && !r.cached) log('cleanup model warm (' + reason + '):', r.model); },
+          (e) => log('cleanup warm failed', e && e.message));
+}
+
 // localOnly hard enforcement: never hand a cloud provider to the pipeline when set.
 // STT → local Whisper; cleanup → offline regex; but command mode has no offline
 // path, so pin its provider to Ollama (local) so it still works fully on-device.
@@ -91,6 +111,9 @@ async function startCapture(mode, via) {
   // that arrive before the session exists land in preBuffer and are fed later.
   recorderSend('rec:start', { deviceId: cfg.mic.deviceId, gain: cfg.mic.gain, whisperMode: cfg.mic.whisperMode });
   hudSend({ state: 'listening', partial: '', message: mode === 'command' ? 'Command…' : '' });
+  // Both models load WHILE the user talks, so the wait after release is just
+  // inference. This is also what starts Ollama when it is installed but idle.
+  warmModels('hotkey');
 
   let target = { exe: '', title: '' };
   try { target = await injector.getActiveWindow(); } catch (e) { log('activeWindow failed', e.message); }
@@ -116,7 +139,11 @@ async function startCapture(mode, via) {
     });
   } catch (e) { return onPipelineError(null, e); }
 
-  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel, warned: false };
+  current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, elevated: !!target.elevated, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel, warned: false };
+
+  // Windows (UIPI) blocks a normal app from typing into an elevated window, so
+  // say it NOW rather than after the user has finished dictating into a void.
+  if (target.elevated) hudSend({ state: 'listening', message: 'Admin window — Bol will copy the text for you to paste' });
 
   // EARLY mic check — tell the user within ~1.2s that nothing is being heard,
   // instead of letting them talk for a minute and only finding out at the end.
@@ -242,15 +269,34 @@ async function onFinal(sess, raw) {
     }
 
     state = S.INSERTING; hudSend({ state: 'inserting' });
-    try { await injector.paste(text); log('PASTED', text.length, 'chars into', ctx.app); }
-    catch (e) { log('paste failed, typing fallback', e.message); await injector.typeText(text); }
+    // Insertion must NEVER lose the dictation. An elevated target is skipped
+    // outright (UIPI discards the keystrokes), and if both paste and typing are
+    // refused the text goes to the clipboard so Ctrl+V still recovers it.
+    let inserted = false;
+    if (!ctx.elevated) {
+      try { await injector.paste(text); inserted = true; log('PASTED', text.length, 'chars into', ctx.app); }
+      catch (e1) {
+        log('paste failed, typing fallback', e1.message);
+        try { await injector.typeText(text); inserted = true; }
+        catch (e2) { log('type failed too', e2.message); }
+      }
+    }
+    if (!inserted) { try { clipboard.writeText(text); } catch (e) { log('clipboard write failed', e.message); } }
 
     if (config.get().privacy.storeHistory) {
-      store.history.add({ raw, polished: text, app: ctx.app, title: ctx.title, durationMs, provider: cfg.stt.provider });
+      store.history.add({ raw, polished: text, app: ctx.app, title: ctx.title, durationMs, provider: cfg.stt.provider, cleanup: cleanupLabel(polished), inserted });
     }
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     analytics.record({ words: wordCount, durationMs, app: ctx.app });
     state = S.IDLE; tray.setState('idle');
+
+    if (!inserted) {
+      hudSend({ state: 'error', message: ctx.elevated
+        ? 'That window runs as administrator — copied instead, press Ctrl+V'
+        : "Couldn't type here — copied instead, press Ctrl+V" });
+      setTimeout(() => hudSend({ state: 'idle' }), 4000);
+      return;
+    }
 
     // Partial-capture note. The LIVE warning above is the primary signal (it fires
     // ~1.2s in, while the user can still react); this only covers the case where
@@ -482,6 +528,11 @@ if (!gotLock) { app.quit(); } else {
     });
 
     config.onChange(() => broadcast('settings:changed', config.get()));
+
+    // Warm both models shortly after boot: on a fresh install this is what pulls
+    // the Whisper model down in the background instead of inside the user's
+    // first dictation, and it starts Ollama if it is installed but not running.
+    if (!SMOKE) setTimeout(() => warmModels('boot'), 4000);
 
     if (SMOKE) {
       const mods = Object.entries(bootReport).map(([k, v]) => `${k}=${v}`).join(' ');

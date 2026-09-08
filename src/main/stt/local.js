@@ -190,4 +190,17 @@ function test(cfg) { // cfg unused — local test is just "is the package instal
   return Promise.resolve(packageResolvable() ? { ok: true } : { ok: false, error: INSTALL_MSG });
 }
 
-module.exports = { createSession, test };
+// Fork the worker and load the model ahead of the first dictation (at boot and on
+// hotkey-down). On a fresh install this is what starts the one-time model
+// download, so it happens in the background instead of inside a dictation.
+function warm(cfg) {
+  try {
+    if (!packageResolvable()) return false;
+    const child = ensureWorker();
+    const sttCfg = (cfg && cfg.stt) || {};
+    child.postMessage({ type: 'warm', model: sttCfg.localModel || DEFAULT_MODEL });
+    return true;
+  } catch (e) { return false; }
+}
+
+module.exports = { createSession, test, warm };

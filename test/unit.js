@@ -241,6 +241,37 @@ t('a UTF-8 BOM does not wipe saved settings', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+console.log('cleanup guards + llm hardening');
+t('polish timeout scales with the dictation instead of a flat 14s', () => {
+  const short = cleanup.localPolishTimeoutMs('hello there');
+  const long = cleanup.localPolishTimeoutMs('x'.repeat(3000));
+  assert(short >= 20000, 'short=' + short);
+  assert(long > short && long <= 90000, 'long=' + long);
+  assert.strictEqual(cleanup.localPolishTimeoutMs('x'.repeat(100000)), 90000, 'must stay capped');
+});
+t('suspiciouslyShort catches a summarised/truncated AI answer, not honest tidying', () => {
+  const spoken = 'so I went to the shop and I bought milk and eggs and then I walked back home in the rain';
+  assert.strictEqual(cleanup.suspiciouslyShort(spoken, 'I bought groceries.'), true);
+  assert.strictEqual(cleanup.suspiciouslyShort(spoken, 'So I went to the shop and bought milk and eggs, then walked back home in the rain.'), false);
+  assert.strictEqual(cleanup.suspiciouslyShort('hello there', 'Hello there.'), false); // too short to judge
+});
+t('failureReason maps provider errors to a reason a user can act on', () => {
+  assert.strictEqual(cleanup.failureReason(new Error('Ollama timed out')), 'timeout');
+  assert.strictEqual(cleanup.failureReason(new Error('Ollama is installed but did not start')), 'ollama-down');
+  assert.strictEqual(cleanup.failureReason(new Error('No Anthropic API key set')), 'no-key');
+  assert.strictEqual(cleanup.failureReason(new Error('kaboom')), 'error');
+});
+t('stripThink removes a reasoning model scratchpad before it can be pasted', () => {
+  assert.strictEqual(llm.stripThink('<think>let me consider</think>Ship it tomorrow.'), 'Ship it tomorrow.');
+  assert.strictEqual(llm.stripThink('Ship it tomorrow.'), 'Ship it tomorrow.');
+});
+t('isLoopback gates the Ollama auto-start to this machine only', () => {
+  assert.strictEqual(llm.isLoopback('http://127.0.0.1:11434'), true);
+  assert.strictEqual(llm.isLoopback('http://localhost:11434'), true);
+  assert.strictEqual(llm.isLoopback('http://192.168.1.50:11434'), false);
+  assert.strictEqual(llm.isLoopback('https://evil.example.com'), false);
+});
+
 console.log('stt.localWorker dictionary prompt');
 const lw = require('../src/main/stt/localWorker');
 // A fake Whisper generation_config with the real whisper-small token ids.
