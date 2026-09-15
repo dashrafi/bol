@@ -1,6 +1,6 @@
 {
   "name": "bol",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bol — speak anywhere, it types. System-wide AI dictation for Windows (Wispr Flow class): push-to-talk, AI cleanup, tones, dictionary, snippets, command mode, local/offline mode.",
   "main": "src/main/index.js",
   "author": "Danish",

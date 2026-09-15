@@ -68,8 +68,13 @@ function endpointFor(c) {
 // Hardcoding one Ollama model means every machine that doesn't happen to have it
 // silently loses AI cleanup. 'auto' asks Ollama what IS installed and picks the
 // best instruction-following chat model available.
+// 14B first: it rewrites a rambling dictation into a tight one far more reliably
+// than 7B and still fits entirely on a 12–24 GB GPU. 32B (~20 GB) is better
+// still but spills onto the CPU on most laptops, which makes every dictation
+// wait, so it ranks second. The old single /7b|14b|32b/ pattern picked whichever
+// Ollama happened to list first.
 const MODEL_PREFERENCE = [
-  /^qwen2\.5[:-]?(7b|14b|32b)/i, /^qwen3/i, /^llama3\.[12][:-]?(8b|70b)/i,
+  /^qwen2\.5[:-]?14b/i, /^qwen2\.5[:-]?32b/i, /^qwen2\.5[:-]?7b/i, /^qwen3/i, /^llama3\.[12][:-]?(8b|70b)/i,
   /^mistral/i, /^gemma2?[:-]?(9b|12b|27b)/i, /^qwen2\.5/i, /^llama3/i, /^phi/i, /^gemma/i,
 ];
 let autoModelCache = { base: null, model: null, at: 0 };

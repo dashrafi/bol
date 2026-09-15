@@ -64,6 +64,12 @@ t('openai provider defaults to Groq free endpoint, needs key', () => {
 t('auto-picks the best installed Ollama model (never a hardcoded one)', () => {
   // a machine with a big and a small qwen: prefer the bigger instruct model
   assert.strictEqual(llm.pickBestModel(['qwen2.5:1.5b', 'qwen2.5:7b']), 'qwen2.5:7b');
+  // 14b beats 7b regardless of the order Ollama lists them in; 32b ranks below
+  // 14b because on a laptop GPU it spills onto the CPU
+  assert.strictEqual(llm.pickBestModel(['qwen2.5:7b', 'qwen2.5:14b']), 'qwen2.5:14b');
+  assert.strictEqual(llm.pickBestModel(['qwen2.5:14b', 'qwen2.5:7b']), 'qwen2.5:14b');
+  assert.strictEqual(llm.pickBestModel(['qwen2.5:7b', 'qwen2.5:32b']), 'qwen2.5:32b');
+  assert.strictEqual(llm.pickBestModel(['qwen2.5:32b', 'qwen2.5:14b']), 'qwen2.5:14b');
   // llama-only machine still works
   assert.strictEqual(llm.pickBestModel(['llama3.1:8b']), 'llama3.1:8b');
   // embedding models can't chat and must never be chosen
@@ -361,6 +367,29 @@ t('a correct self-correction edit is not rejected as "dropped a name/date"', () 
 t('the prompt forbids turning rupees into dollars and forms spoken emails', () => {
   const p = cleanup.buildSystemPrompt({}, 'auto', 'concise');
   assert(/Never turn rupees/.test(p) && /danish@timegram\.io/.test(p) && !/"five hundred dollars" → "\$500", "twenty five/.test(p));
+});
+t('short messages are cleaned, not condensed; rambles are condensed', () => {
+  const short = 'yeah okay sounds good see you tomorrow';
+  const ramble = Array.from({ length: 40 }, (_, i) => 'word' + i).join(' ');
+  assert.strictEqual(cleanup.pickStyle('auto', 'concise', short), 'clean');
+  assert.strictEqual(cleanup.pickStyle('auto', 'concise', ramble), 'concise');
+  assert.strictEqual(cleanup.pickStyle('auto', 'clean', ramble), 'clean');   // user chose clean
+  assert.strictEqual(cleanup.pickStyle('raw', 'concise', ramble), 'clean');  // raw tone never condenses
+  assert.strictEqual(cleanup.pickStyle('auto', undefined, ramble), 'concise'); // old configs without the key
+});
+t('AI output is finished: capital first letter, ending punctuation, "?" for questions', () => {
+  assert.strictEqual(cleanup.finishAiText('whatever you fixed works now'), 'Whatever you fixed works now.');
+  assert.strictEqual(cleanup.finishAiText('It works. was it only my laptop'), 'It works. was it only my laptop?');
+  assert.strictEqual(cleanup.finishAiText('Already done!'), 'Already done!');
+  assert.strictEqual(cleanup.finishAiText('Send it to danish@timegram.io'), 'Send it to danish@timegram.io.');
+  assert.strictEqual(cleanup.finishAiText(''), '');
+});
+t('the empty sentinel is only for no-real-words input (a mic test was being dropped as "noise")', () => {
+  for (const st of ['clean', 'concise']) {
+    const p = cleanup.buildSystemPrompt({}, 'auto', st);
+    assert(/no real words at all/.test(p) && /NOT empty/.test(p) && /a mic test/.test(p), st);
+    assert(!/only noise, or contains no real words/.test(p), st + ': old wording must be gone');
+  }
 });
 t('new installs and upgrades default to concise', () => {
   assert.strictEqual(config.get().cleanup.style, 'concise');
