@@ -306,6 +306,66 @@ t('existing installs load with hold mode (no surprise behaviour change)', () => 
   assert.strictEqual(config.get().ui.dictationMode, 'hold');
 });
 
+console.log('concise cleanup guards');
+t('keyTokens keeps numbers, emails, mid-sentence names and dictionary words — not sentence-start capitals', () => {
+  const k = cleanup.keyTokens('So the budget is 50,000 for Bol. Send it to danish@timegram.io and ask Ahmed on WhatsApp.', [{ word: 'Bol' }]);
+  for (const want of ['50000', 'danishtimegramio', 'ahmed', 'whatsapp', 'bol']) assert(k.indexOf(want) !== -1, 'missing ' + want + ' in ' + k.join(','));
+  assert(k.indexOf('so') === -1 && k.indexOf('send') === -1, 'sentence-start words are not names: ' + k.join(','));
+});
+t('concise output that keeps every detail passes, even at half the length', () => {
+  const raw = 'so yeah the meeting is on 23 September with Ahmed and uh the budget is 50000 so yeah that is about it, the meeting with Ahmed is on the 23rd';
+  assert.strictEqual(cleanup.guardAiOutput(raw, 'The meeting with Ahmed is on 23 September, and the budget is 50000.', 'concise', []), null);
+});
+t('guards reject an answered dictation, a collapsed one, and one that dropped the numbers/names', () => {
+  const q = 'what is the cheapest way to host a node app with a database let me know';
+  assert.strictEqual(cleanup.guardAiOutput(q, 'The cheapest way is to use a free tier on Render or Railway. '.repeat(3), 'concise', []), 'ai-long');
+  const long = 'I went to the shop and bought milk and eggs and bread and then I walked home and made breakfast for everyone';
+  assert.strictEqual(cleanup.guardAiOutput(long, 'Breakfast.', 'concise', []), 'ai-short');
+  const facts = 'call Ahmed at 3:30 about the 50000 invoice and tell Sara the deadline is 23 September';
+  assert(/^ai-dropped/.test(cleanup.guardAiOutput(facts, 'Call him about the invoice and tell her the deadline.', 'concise', [])));
+  assert.strictEqual(cleanup.guardAiOutput('uh hmm', '', 'concise', []), null);           // noise → empty is fine
+  assert.strictEqual(cleanup.guardAiOutput('please send the report today', '', 'concise', []), 'ai-empty');
+});
+t('clean style keeps the stricter length floor', () => {
+  const raw = 'so I went to the shop and I bought milk and eggs and then I walked back home in the rain';
+  assert.strictEqual(cleanup.guardAiOutput(raw, 'I bought milk and eggs.', 'clean', []), 'ai-short');
+});
+t('the prompt flips rule 3 by style (concise must not forbid merging points)', () => {
+  const concise = cleanup.buildSystemPrompt({}, 'auto', 'concise');
+  const clean = cleanup.buildSystemPrompt({}, 'auto', 'clean');
+  assert(/SAY EACH ONE ONCE/.test(concise) && /CONCISE EDITING/.test(concise) && !/no merging of points/.test(concise));
+  assert(/no merging of points/.test(clean) && !/CONCISE EDITING/.test(clean));
+  assert(/NEVER answer questions/.test(concise) && /NEVER answer questions/.test(clean), 'both keep the never-answer rule');
+});
+t('offline fallback strips "so yeah" and the "that\'s about it" sign-off but keeps a real yeah', () => {
+  const out = cleanup.localCleanup('so yeah let me know the price. And well the site is slow. So yeah, that\'s about it');
+  assert(!/so yeah/i.test(out) && !/about it/i.test(out) && !/and well/i.test(out), out);
+  assert(/let me know the price/i.test(out) && /site is slow/i.test(out), out);
+  assert(/yeah/i.test(cleanup.localCleanup('yeah sounds good, see you tomorrow')));
+});
+t('English that happens to say "main"/"to"/"hi" is not mistaken for Hinglish (it was losing AI cleanup)', () => {
+  assert.strictEqual(cleanup.looksNonEnglish('The main problem is the site is slow. So the main problem, the site is slow.'), false);
+  assert.strictEqual(cleanup.looksNonEnglish('hi to all, the main office is closed so we ho ho home'), false);
+});
+t('real Hinglish is still protected, including short phrases', () => {
+  assert.strictEqual(cleanup.looksNonEnglish('kal milte hain'), true);
+  assert.strictEqual(cleanup.looksNonEnglish('yaar kal wali meeting reschedule kar dena please'), true);
+  assert.strictEqual(cleanup.looksNonEnglish('main thora late ho jaunga'), true);
+});
+t('a correct self-correction edit is not rejected as "dropped a name/date"', () => {
+  const raw = 'tell Ali to send the invoice on Tuesday no wait Wednesday, and uh also cc Sara, actually no not Sara cc Ahmed';
+  assert.strictEqual(cleanup.guardAiOutput(raw, 'Tell Ali to send the invoice on Wednesday, and cc Ahmed.', 'concise', []), null);
+  // ...but a genuinely lost detail elsewhere in the same dictation is still caught
+  assert(/^ai-dropped/.test(cleanup.guardAiOutput(raw + ' and the total is 45000 for Karachi', 'Tell him to send the invoice on Wednesday.', 'concise', [])));
+});
+t('the prompt forbids turning rupees into dollars and forms spoken emails', () => {
+  const p = cleanup.buildSystemPrompt({}, 'auto', 'concise');
+  assert(/Never turn rupees/.test(p) && /danish@timegram\.io/.test(p) && !/"five hundred dollars" → "\$500", "twenty five/.test(p));
+});
+t('new installs and upgrades default to concise', () => {
+  assert.strictEqual(config.get().cleanup.style, 'concise');
+});
+
 console.log('stt.localWorker dictionary prompt');
 const lw = require('../src/main/stt/localWorker');
 // A fake Whisper generation_config with the real whisper-small token ids.

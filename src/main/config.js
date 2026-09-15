@@ -63,6 +63,9 @@ function buildDefaults() {
       // Route code-switched (Roman Urdu/Hinglish/non-English) text to the offline
       // cleaner instead of the LLM, which would translate it. Keeps mixed language intact.
       preserveMixedLanguage: true,
+      // 'concise' = keep every point, say it once, drop the rambling (what Bol
+      // is for); 'clean' = keep the user's wording, fix fillers + punctuation.
+      style: 'concise',
       tone: 'auto', // 'auto' | 'formal' | 'casual' | 'raw'
       customInstructions: '',
       appRules: [

@@ -487,6 +487,13 @@
     sec.appendChild(row('Tidy up my words', 'Removes “um”, fixes punctuation and capitalisation. Roman Urdu / Hinglish is never translated.',
       toggle((cfg.cleanup.mode || 'full') !== 'off', function (v) { patch({ cleanup: { mode: v ? 'full' : 'off' } }); })));
 
+    // 4b. How much to tidy — concise is the point of Bol; clean keeps your wording
+    sec.appendChild(row('How much to tidy', 'Concise removes “so yeah”, repeats and rambling but keeps every point you made. Clean only fixes fillers and punctuation.',
+      select(cfg.cleanup.style || 'concise', [
+        { v: 'concise', t: 'Concise — every point, no rambling' },
+        { v: 'clean', t: 'Clean — keep my wording' },
+      ], function (v) { patch({ cleanup: { style: v } }); })));
+
     return sec;
   }
 

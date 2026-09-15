@@ -40,7 +40,7 @@ function log(...a) {
 // tidied up?" has an answer instead of a guess. 'ai' | 'offline' | a reason.
 function cleanupLabel(polished) {
   if (!polished) return '';
-  if (polished.usedAI) return 'ai';
+  if (polished.usedAI) return polished.style ? 'ai-' + polished.style : 'ai';
   return polished.reason ? String(polished.reason) : 'offline';
 }
 
