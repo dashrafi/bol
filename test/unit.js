@@ -379,7 +379,7 @@ t('short messages are cleaned, not condensed; rambles are condensed', () => {
 });
 t('AI output is finished: capital first letter, ending punctuation, "?" for questions', () => {
   assert.strictEqual(cleanup.finishAiText('whatever you fixed works now'), 'Whatever you fixed works now.');
-  assert.strictEqual(cleanup.finishAiText('It works. was it only my laptop'), 'It works. was it only my laptop?');
+  assert.strictEqual(cleanup.finishAiText('It works. was it only my laptop'), 'It works. Was it only my laptop?');
   assert.strictEqual(cleanup.finishAiText('Already done!'), 'Already done!');
   assert.strictEqual(cleanup.finishAiText('Send it to danish@timegram.io'), 'Send it to danish@timegram.io.');
   assert.strictEqual(cleanup.finishAiText(''), '');
@@ -390,6 +390,18 @@ t('the empty sentinel is only for no-real-words input (a mic test was being drop
     assert(/no real words at all/.test(p) && /NOT empty/.test(p) && /a mic test/.test(p), st);
     assert(!/only noise, or contains no real words/.test(p), st + ': old wording must be gone');
   }
+});
+t('AI output loses the fixed filler phrases the model keeps leaving in', () => {
+  assert.strictEqual(cleanup.stripPadding('I updated the sheet. So yeah, that\'s about it.'), 'I updated the sheet.');
+  assert.strictEqual(cleanup.stripPadding('Press the key and it records. Something like that. Then press it again.'), 'Press the key and it records. Then press it again.');
+  assert.strictEqual(cleanup.stripPadding('There should be a hold button or something like that.'), 'There should be a hold button.');
+  assert.strictEqual(cleanup.stripPadding('Basically, ignore everything I said before.'), 'Ignore everything I said before.');
+  assert.strictEqual(cleanup.stripPadding('It works. And well, the export is slow.'), 'It works. The export is slow.');
+  // real uses stay
+  assert.strictEqual(cleanup.stripPadding('I basically agree with the plan.'), 'I basically agree with the plan.');
+  assert.strictEqual(cleanup.stripPadding('Something like that would work.'), 'Something like that would work.');
+  assert.strictEqual(cleanup.stripPadding('Send it to danish@timegram.io today.'), 'Send it to danish@timegram.io today.');
+  assert.strictEqual(cleanup.finishAiText('the site is slow, so yeah fix it'), 'The site is slow, fix it.');
 });
 t('new installs and upgrades default to concise', () => {
   assert.strictEqual(config.get().cleanup.style, 'concise');
