@@ -71,7 +71,9 @@ function buildDefaults() {
       ],
     },
     mic: { deviceId: 'default', gain: 1.0, whisperMode: false },
-    ui: { hud: true, launchAtLogin: false, onboarded: false },
+    // dictationMode: 'hold' (hold the key while talking) | 'handsfree' (press to
+    // start, press again to send — for dictating away from the keyboard).
+    ui: { hud: true, launchAtLogin: false, onboarded: false, dictationMode: 'hold' },
     privacy: { localOnly: false, storeHistory: true },
   };
 }

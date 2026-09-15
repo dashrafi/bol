@@ -272,6 +272,40 @@ t('isLoopback gates the Ollama auto-start to this machine only', () => {
   assert.strictEqual(llm.isLoopback('https://evil.example.com'), false);
 });
 
+console.log('pttMode (hold vs hands-free dictation key)');
+const ptt = require('../src/main/pttMode');
+t('hands-free: press starts, second press sends, releasing never stops it', () => {
+  const k = (event, state, via, trigger) => ptt.keyAction({ mode: 'handsfree', event, state, via, trigger });
+  assert.strictEqual(k('down', 'idle', null, null), 'start');
+  assert.strictEqual(k('up', 'listening', 'handsfree', 'ptt'), 'ignore');   // walking away with the key released
+  assert.strictEqual(k('down', 'listening', 'handsfree', 'ptt'), 'stop');   // press again = send
+  assert.strictEqual(k('down', 'finalizing', null, null), 'ignore');       // busy: must not start a second capture
+  assert.strictEqual(k('down', 'listening', 'toggle', 'toggle'), 'ignore'); // F10 owns this capture
+});
+t('hold mode keeps the original behaviour, including the tap-latch', () => {
+  const k = (event, state, via, trigger) => ptt.keyAction({ mode: 'hold', event, state, via, trigger });
+  assert.strictEqual(k('down', 'idle', null, null), 'start');
+  assert.strictEqual(k('up', 'listening', 'ptt', 'ptt'), 'stop');
+  assert.strictEqual(k('down', 'listening', 'tap-toggle', 'ptt'), 'stop'); // second tap ends a latched capture
+  assert.strictEqual(ptt.normalizeMode(undefined), 'hold');                // old configs / garbage → hold
+  assert.strictEqual(ptt.normalizeMode('nonsense'), 'hold');
+});
+t('hands-free recordings get 20 minutes; a held key keeps the 5-minute stuck-key guard', () => {
+  assert.strictEqual(ptt.sessionCapMs('ptt'), 5 * 60 * 1000);
+  assert.strictEqual(ptt.sessionCapMs('handsfree'), 20 * 60 * 1000);
+  assert.strictEqual(ptt.sessionCapMs('tap-toggle'), 20 * 60 * 1000);
+  assert.strictEqual(ptt.sessionCapMs('toggle'), 20 * 60 * 1000);
+});
+t('transcription watchdog scales with the recording instead of a flat 15 s', () => {
+  assert(ptt.finalizeTimeoutMs(5000) >= 30000);
+  assert(ptt.finalizeTimeoutMs(155000) > 155000, 'a 2.5 min recording must get longer than its own length');
+  assert.strictEqual(ptt.finalizeTimeoutMs(10 * 60 * 60 * 1000), 45 * 60 * 1000, 'capped');
+  assert.strictEqual(ptt.finalizeTimeoutMs(-5), 30000);
+});
+t('existing installs load with hold mode (no surprise behaviour change)', () => {
+  assert.strictEqual(config.get().ui.dictationMode, 'hold');
+});
+
 console.log('stt.localWorker dictionary prompt');
 const lw = require('../src/main/stt/localWorker');
 // A fake Whisper generation_config with the real whisper-small token ids.

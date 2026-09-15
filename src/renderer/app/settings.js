@@ -467,7 +467,14 @@
         else pttBtn.textContent = (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9';
       }).catch(function () { pttBtn.classList.remove('arm'); pttBtn.textContent = (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9'; });
     });
-    sec.appendChild(row('Your dictation key', 'Hold it and speak — or tap once to start, tap again to stop.', h('div', { class: 'st-key' }, [pttBtn])));
+    sec.appendChild(row('Your dictation key', 'The key you press to dictate, in any app.', h('div', { class: 'st-key' }, [pttBtn])));
+
+    // 1b. How that key behaves — hands-free is for talking away from the keyboard
+    sec.appendChild(row('How the key works', 'Hands-free: press once and walk around while you talk — press it again when you are done and Bol types it.',
+      select((cfg.ui && cfg.ui.dictationMode) || 'hold', [
+        { v: 'hold', t: 'Hold while talking' },
+        { v: 'handsfree', t: 'Hands-free — press to start, press again to send' },
+      ], function (v) { patch({ ui: { dictationMode: v } }); })));
 
     // 2. Microphone + the test that proves it hears you
     sec.appendChild(micPickerRow());

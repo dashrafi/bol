@@ -160,6 +160,10 @@
         if (payload.partial === undefined) partial = '';
         if (payload.message === undefined) message = '';
         lastRendered = null;
+      } else if (payload.message === undefined) {
+        // A new stage with no message of its own must not inherit the last one
+        // ("Transcribing…" was showing through the whole polishing step).
+        message = '';
       }
       state = next;
     }

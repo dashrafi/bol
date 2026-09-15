@@ -18,6 +18,7 @@ const cleanup = require('./cleanup');
 const commandMode = require('./commandMode');
 const snippets = require('./snippets');
 const tray = require('./tray');
+const pttMode = require('./pttMode');
 
 // ---------- state ----------
 const S = { IDLE: 'idle', LISTENING: 'listening', FINALIZING: 'finalizing', POLISHING: 'polishing', INSERTING: 'inserting' };
@@ -133,7 +134,18 @@ async function startCapture(mode, via) {
   let sess;
   try {
     sess = stt.createSession(cfg, dict, {
-      onPartial: (text) => { if (current && current.session === sess) hudSend({ state: 'listening', partial: text }); },
+      onPartial: (text) => {
+        if (!current || current.session !== sess) return;
+        if (state === S.LISTENING) return hudSend({ state: 'listening', partial: text });
+        // After the key is released these are worker progress messages
+        // ("Downloading model… 40%", "Transcribing…"). Keep the HUD on its
+        // transcribing pill — flipping back to the red listening pill made it look
+        // like it was still recording — and give a live job more time.
+        hudSend({ state: 'transcribing', message: text });
+        if (state === S.FINALIZING && (current.finalizeDeadline || 0) - Date.now() < pttMode.PROGRESS_GRACE_MS) {
+          armFinalizeWatchdog(sess, pttMode.PROGRESS_GRACE_MS);
+        }
+      },
       onFinal: (text) => onFinal(sess, text),
       onError: (err) => onPipelineError(sess, err),
     });
@@ -141,9 +153,13 @@ async function startCapture(mode, via) {
 
   current = { session: sess, mode, via, trigger, app: target.exe, title: target.title, elevated: !!target.elevated, startTs: Date.now(), chunks: 0, maxLevel: preMaxLevel, warned: false };
 
-  // Windows (UIPI) blocks a normal app from typing into an elevated window, so
-  // say it NOW rather than after the user has finished dictating into a void.
-  if (target.elevated) hudSend({ state: 'listening', message: 'Admin window — Bol will copy the text for you to paste' });
+  // The standing HUD line for this recording. Windows (UIPI) blocks a normal app
+  // from typing into an elevated window, so that is said NOW rather than after the
+  // user has finished dictating into a void; otherwise hands-free says how to send.
+  const keyLabel = (cfg.hotkeys.pushToTalk && cfg.hotkeys.pushToTalk.label) || 'F9';
+  if (target.elevated) current.hint = 'Admin window — Bol will copy the text for you to paste';
+  else if (via === 'handsfree') current.hint = 'Recording — press ' + keyLabel + ' again to send';
+  if (current.hint) hudSend({ state: 'listening', message: current.hint });
 
   // EARLY mic check — tell the user within ~1.2s that nothing is being heard,
   // instead of letting them talk for a minute and only finding out at the end.
@@ -156,18 +172,24 @@ async function startCapture(mode, via) {
       hudSend({ state: 'listening', message: '⚠ Not hearing you — check your mic (Settings)' });
     } else if (watched.warned) {
       watched.warned = 'recovered';
-      hudSend({ state: 'listening', message: '' });
+      hudSend({ state: 'listening', message: watched.hint || '' });
     }
   }, 1200);
   // Hand the buffered first words to the session in order.
   for (const b of preBuffer) { current.chunks++; try { sess.feed(b); } catch {} }
   preBuffer = [];
-  // Safety net: a forgotten hands-free/tap-toggle session auto-finalizes after
-  // 5 minutes instead of holding the mic open forever.
+  // Safety net: a session auto-finalizes instead of holding the mic open forever —
+  // 5 min for a held key (a stuck key), 20 min once it is hands-free. A hold that
+  // turns into a tap-latch mid-way gets the longer limit when the timer fires.
   const guarded = current;
-  setTimeout(() => {
-    if (state === S.LISTENING && current === guarded) { log('max session length reached — auto-stopping'); stopCapture(); }
-  }, 5 * 60 * 1000);
+  const capGuard = () => {
+    if (state !== S.LISTENING || current !== guarded) return;
+    const left = pttMode.sessionCapMs(guarded.via) - (Date.now() - guarded.startTs);
+    if (left > 1000) { setTimeout(capGuard, left); return; }
+    log('max session length reached — auto-stopping');
+    stopCapture();
+  };
+  setTimeout(capGuard, pttMode.sessionCapMs(via));
   log('LISTENING', mode, via, 'stt=' + cfg.stt.provider, 'app=' + target.exe);
 }
 
@@ -185,7 +207,8 @@ function stopCapture(owner) {
   if (current.via === 'ptt' && current.mode === 'dictate' && (Date.now() - current.startTs) < 350) {
     current.via = 'tap-toggle';
     log('tap detected -> hands-free until next tap');
-    hudSend({ state: 'listening', message: 'Recording — tap again to stop' });
+    if (!current.elevated) current.hint = 'Recording — tap again to stop';
+    hudSend({ state: 'listening', message: current.hint });
     return;
   }
   log('FINALIZING, chunks fed =', current.chunks, 'maxLevel =', (current.maxLevel || 0).toFixed(3));
@@ -194,9 +217,36 @@ function stopCapture(owner) {
   recorderSend('rec:stop');
   hudSend({ state: 'transcribing' });
   const sess = current.session;
+  const recordedMs = Date.now() - current.startTs;
+  // Arm before end(): a provider that fails synchronously clears `current`, and
+  // the arm is then a no-op.
+  armFinalizeWatchdog(sess, pttMode.finalizeTimeoutMs(recordedMs));
   try { sess.end(); } catch (e) { onPipelineError(sess, e); }
-  // watchdog: if the provider never calls onFinal, unstick after 15s
-  setTimeout(() => { if (current && current.session === sess && state === S.FINALIZING) onPipelineError(sess, new Error('Transcription timed out')); }, 15000);
+}
+
+// Unsticks FINALIZING if the provider never answers. Sized to the recording (a
+// flat 15 s used to kill any on-device transcription longer than about a minute
+// of speech) and pushed back while the worker is still reporting progress.
+function armFinalizeWatchdog(sess, ms) {
+  if (!current || current.session !== sess) return;
+  if (current.finalizeTimer) clearTimeout(current.finalizeTimer);
+  current.finalizeDeadline = Date.now() + ms;
+  current.finalizeTimer = setTimeout(() => {
+    if (current && current.session === sess && state === S.FINALIZING) onPipelineError(sess, new Error('Transcription timed out'));
+  }, ms);
+}
+
+// Routes the dictation key through the user's chosen mode (Settings → "How the
+// key works").
+function dictationKey(event) {
+  const mode = pttMode.normalizeMode(config.get().ui && config.get().ui.dictationMode);
+  const action = pttMode.keyAction({
+    mode, event, state,
+    via: current ? current.via : null,
+    trigger: current ? current.trigger : startingTrigger,
+  });
+  if (action === 'start') startCapture('dictate', mode === pttMode.HANDS_FREE ? 'handsfree' : 'ptt');
+  else if (action === 'stop') stopCapture('ptt');
 }
 
 function cancelCapture() {
@@ -505,13 +555,10 @@ if (!gotLock) { app.quit(); } else {
 
     try {
       hotkeys.init({
-        onPTTDown: () => {
-          // Second tap of a tap-toggle capture stops it (duration is now > 350ms,
-          // so stopCapture finalizes instead of re-converting).
-          if (state === S.LISTENING && current && current.trigger === 'ptt' && current.via === 'tap-toggle') return stopCapture('ptt');
-          startCapture('dictate', 'ptt');
-        },
-        onPTTUp: () => stopCapture('ptt'),
+        // Hold mode: press starts, release stops, a quick tap latches (second tap
+        // stops). Hands-free mode: press starts, press again sends. See pttMode.js.
+        onPTTDown: () => dictationKey('down'),
+        onPTTUp: () => dictationKey('up'),
         onToggle: () => { (state === S.IDLE) ? startCapture('dictate', 'toggle') : (state === S.LISTENING && current && current.via === 'toggle' && stopCapture('toggle')); },
         onCommandDown: () => startCapture('command', 'ptt'),
         onCommandUp: () => stopCapture('command'),

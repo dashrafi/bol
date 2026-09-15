@@ -32,7 +32,7 @@ Windows SmartScreen will also say "unknown publisher" → **More info → Run an
 
 ## Features
 
-- **Push-to-talk** (default `F9`) + **hands-free toggle** (`F10`) — works in any app
+- **Push-to-talk** (default `F9`) — hold while talking, or switch Settings → *How the key works* to **Hands-free**: press once, walk around and talk, press again to send (up to 20 min). A dedicated hands-free toggle (`F10`) is there too — works in any app
 - **AI auto-edits** — fillers, false starts, punctuation and capitalization fixed by a local model; raw and light (offline regex) modes too
 - **Tone matching** — formal in Outlook, casual in Slack; per-app rules you control + custom instructions
 - **Command mode** (`F8`) — select text, hold, say *"make this more polite"* / *"bullet these"* — voice-edits in place; with nothing selected it generates
