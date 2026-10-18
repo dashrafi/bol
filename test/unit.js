@@ -546,6 +546,28 @@ ta('the shipped model descriptor is complete: pinned hash and size, free licence
   assert(/^[\w.-]+\/[\w.-]+$/.test(M.repo) && /\.gguf$/i.test(M.file), M.repo + '/' + M.file);
   assert(['Apache-2.0', 'MIT'].includes(M.license), 'only freely redistributable licences ship: ' + M.license);
 });
+ta('Settings never promises Ollama when a dictation would really use the built-in engine', async () => {
+  // Ollama may be installed on the machine running the tests; with auto-start
+  // off and nothing listening, a dictation goes to the built-in engine, so the
+  // status must say built-in (it used to say "Ollama (starting...)").
+  llm._setBuiltinForTest(stubBuiltin('ready'));
+  const st = await llm.engineStatus(NO_OLLAMA);
+  assert.strictEqual(st.engine, 'builtin', JSON.stringify(st));
+});
+ta('Settings labels the worker\'s real device values correctly (it once showed a GPU as "CPU")', async () => {
+  // Load the real renderer file in a sandbox and read the device values the
+  // worker can actually report out of its source, so both sides are tested together.
+  const vm = require('vm');
+  const sandbox = { window: { BolPages: {} }, console };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app', 'settings.js'), 'utf8'), sandbox);
+  const engineText = sandbox.window.BolPages.settings.engineText;
+  const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'builtinLlmWorker.js'), 'utf8');
+  const m = workerSrc.match(/const device = llama\.gpu && model\.gpuLayers > 0 \? '(\w+)' : '(\w+)';/);
+  assert(m, 'worker device expression changed: update this test');
+  assert(/GPU/.test(engineText({ engine: 'builtin', state: 'ready', label: 'X', device: m[1] })), 'worker "' + m[1] + '" must read as GPU');
+  assert(/CPU/.test(engineText({ engine: 'builtin', state: 'ready', label: 'X', device: m[2] })), 'worker "' + m[2] + '" must read as CPU');
+  assert(/downloading once \(40%\)/.test(engineText({ engine: 'builtin', state: 'downloading', pct: 40 })));
+});
 ta('a cloud provider is never silently swapped for the built-in engine', async () => {
   const b = stubBuiltin('ready'); llm._setBuiltinForTest(b);
   await assert.rejects(llm.chat({ provider: 'openai', openaiKey: '' }, 's', 'u', {}), /No API key/);

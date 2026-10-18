@@ -177,6 +177,17 @@ async function ensureOllama(base) {
   try { return await startPromise; } finally { startPromise = null; }
 }
 
+// True only if ensureOllama() would actually try (or is trying) to start Ollama
+// right now — mirrors its own conditions so Settings never promises an engine a
+// dictation will not get.
+function ollamaWillStart(base) {
+  if (!isLoopback(base) || process.env.BOL_NO_OLLAMA_AUTOSTART === '1') return false;
+  if (startPromise) return true;
+  if (!findOllamaExe()) return false;
+  const triedRecently = lastStartAttempt && (Date.now() - lastStartAttempt) < OLLAMA_START_RETRY_MS;
+  return !(triedRecently && !lastStartResult.started);
+}
+
 // Plain-language reason the local AI is unavailable, for the HUD/history.
 function ollamaUnavailableMessage(base) {
   if (lastStartResult.exe && !lastStartResult.started) return 'Ollama is installed but did not start';
@@ -360,9 +371,12 @@ async function engineStatus(c) {
       let model = ep.model;
       if (!model || model === 'auto') { try { model = await resolveOllamaModel(ep.base); } catch (e) { model = null; } }
       if (model) return { engine: 'ollama', model };
-    } else if (isLoopback(ep.base) && findOllamaExe()) {
+      // Ollama is running but has no chat model: dictations use the built-in engine.
+    } else if (ollamaWillStart(ep.base)) {
       return { engine: 'ollama', model: ep.model, state: 'starting' };
     }
+    // Not running and will not be started (not installed, auto-start off, or a
+    // start already failed): dictations use the built-in engine, so say that.
   }
   return Object.assign({ engine: 'builtin' }, builtin.getStatus());
 }

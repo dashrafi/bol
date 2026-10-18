@@ -21,7 +21,7 @@
       if (st.state === 'downloading') return 'AI engine: built-in · downloading once' + (st.pct != null ? ' (' + st.pct + '%)' : '') + ' · basic cleanup until it finishes';
       if (st.state === 'error') return 'AI engine: built-in · could not load, basic cleanup is used (' + (st.error || 'error') + ')';
       if (st.state === 'loading') return 'AI engine: built-in · loading…';
-      return 'AI engine: built-in' + (st.label ? ' (' + st.label + ')' : '') + (st.device ? ' · ' + (st.device === 'dml' ? 'GPU' : 'CPU') : '') + ' · nothing to install';
+      return 'AI engine: built-in' + (st.label ? ' (' + st.label + ')' : '') + (st.device ? ' · ' + (st.device === 'cpu' ? 'CPU' : 'GPU') : '') + ' · nothing to install';
     }
     if (st.engine === 'anthropic') return 'AI engine: Anthropic' + (st.model ? ' · ' + st.model : '');
     if (st.engine === 'cloud') return 'AI engine: cloud' + (st.model ? ' · ' + st.model : '');
@@ -557,5 +557,6 @@
     el.appendChild(wrap);
   }
 
-  window.BolPages.settings = { render: render };
+  // engineText is exposed so a unit test can feed it the worker's real status values.
+  window.BolPages.settings = { render: render, engineText: engineText };
 })();
