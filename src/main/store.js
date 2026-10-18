@@ -98,6 +98,7 @@ const history = {
         durationMs: toInt(e.durationMs, 0),
         provider: String(e.provider || ''),
         cleanup: String(e.cleanup || ''), // 'ai' | 'offline' | 'mixed-language' | 'ollama-down' | 'timeout' | ...
+        engine: String(e.engine || ''),   // which AI answered, e.g. 'ollama:qwen2.5:7b' or 'builtin:onnx-community/Qwen2.5-1.5B-Instruct'
         inserted: e.inserted !== false,   // false = it went to the clipboard instead of the app
         words: wordCount(e.polished),
       };

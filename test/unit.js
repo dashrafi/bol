@@ -446,6 +446,118 @@ t('whisperLanguageCode: auto/multi mean "let the model default", codes pass thro
   assert.strictEqual(lw.whisperLanguageCode('UR'), 'ur');
 });
 
-try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+// ---- async tests (run after the sync ones) ----
+const asyncTests = [];
+function ta(name, fn) { asyncTests.push([name, fn]); }
+
+console.log('built-in AI engine (Ollama missing = still a complete app)');
+// A port nothing listens on, and no auto-start: behaves exactly like a PC without Ollama.
+process.env.BOL_NO_OLLAMA_AUTOSTART = '1';
+const NO_OLLAMA = { mode: 'full', provider: 'ollama', ollamaUrl: 'http://127.0.0.1:9', ollamaModel: 'auto', style: 'concise', tone: 'auto', preserveMixedLanguage: true, appRules: [] };
+function stubBuiltin(behaviour) {
+  const calls = [];
+  return {
+    calls,
+    MODEL: { id: 'stub/model', label: 'Stub' },
+    available: () => true,
+    warm: () => { calls.push('warm'); return true; },
+    getStatus: () => ({ state: behaviour === 'downloading' ? 'downloading' : 'ready', pct: 40, model: 'stub/model', label: 'Stub' }),
+    chat: async (system, user) => {
+      calls.push('chat');
+      if (behaviour === 'downloading') { const e = new Error('Built-in AI is downloading (40%)'); e.code = 'BUILTIN_NOT_READY'; throw e; }
+      // a well-behaved concise edit of the test transcript below
+      return { text: 'The export is slow and takes forever. Can you check why, and add a dark mode?', device: 'cpu', ms: 5 };
+    },
+  };
+}
+const RAMBLE = 'okay so basically I tried the new build and um it works but the export is slow like really slow the export takes forever so yeah can you check why the export is slow and also add a dark mode that is about it';
+ta('no Ollama on this PC: chat falls through to the built-in engine', async () => {
+  const b = stubBuiltin('ready'); llm._setBuiltinForTest(b);
+  const meta = {};
+  const out = await llm.chat(NO_OLLAMA, 'sys', 'hello there', { maxTokens: 50, timeoutMs: 5000, meta });
+  assert(/export is slow/.test(out), out);
+  assert.strictEqual(meta.engine, 'builtin');
+  assert.deepStrictEqual(b.calls, ['chat']);
+});
+ta('no Ollama: polish() gives a real AI edit (not just the regex pass) and says which engine', async () => {
+  llm._setBuiltinForTest(stubBuiltin('ready'));
+  const r = await cleanup.polish(RAMBLE, { cfg: { cleanup: NO_OLLAMA }, app: 'notepad', dictionary: [], snippets: [] });
+  assert.strictEqual(r.usedAI, true, JSON.stringify(r));
+  assert.strictEqual(r.engine, 'builtin');
+  assert(/dark mode/.test(r.text) && !/so yeah/i.test(r.text), r.text);
+});
+ta('built-in model still downloading: dictation is not held up, offline cleanup + reason ai-downloading', async () => {
+  llm._setBuiltinForTest(stubBuiltin('downloading'));
+  const t0 = Date.now();
+  const r = await cleanup.polish(RAMBLE, { cfg: { cleanup: NO_OLLAMA }, app: 'notepad', dictionary: [], snippets: [] });
+  assert.strictEqual(r.usedAI, false);
+  assert.strictEqual(r.reason, 'ai-downloading');
+  assert(r.text && /dark mode/i.test(r.text), r.text);
+  assert(Date.now() - t0 < 4000, 'must not wait on the download');
+});
+ta('provider "builtin" routes straight to the built-in engine and warm() starts its download', async () => {
+  const b = stubBuiltin('ready'); llm._setBuiltinForTest(b);
+  const meta = {};
+  await llm.chat(Object.assign({}, NO_OLLAMA, { provider: 'builtin' }), 's', 'u', { meta });
+  assert.strictEqual(meta.engine, 'builtin');
+  const w = await llm.warm(Object.assign({}, NO_OLLAMA, { provider: 'builtin' }));
+  assert.strictEqual(w.engine, 'builtin');
+  const w2 = await llm.warm(NO_OLLAMA); // ollama provider but no Ollama -> warms built-in instead
+  assert.strictEqual(w2.engine, 'builtin');
+  assert(b.calls.filter((c) => c === 'warm').length === 2, b.calls.join(','));
+});
+ta('Settings engine status reports the built-in engine when Ollama is absent', async () => {
+  llm._setBuiltinForTest(stubBuiltin('downloading'));
+  const savedPath = process.env.PATH, savedLocal = process.env.LOCALAPPDATA, savedPF = process.env.ProgramFiles;
+  process.env.PATH = ''; process.env.LOCALAPPDATA = path.join(os.tmpdir(), 'bol-no-ollama'); process.env.ProgramFiles = path.join(os.tmpdir(), 'bol-no-pf');
+  try {
+    const st = await llm.engineStatus(NO_OLLAMA);
+    assert.strictEqual(st.engine, 'builtin');
+    assert.strictEqual(st.state, 'downloading');
+    assert.strictEqual(st.pct, 40);
+  } finally { process.env.PATH = savedPath; process.env.LOCALAPPDATA = savedLocal; process.env.ProgramFiles = savedPF; }
+});
+ta('warm() hands the built-in engine both prompts to pre-evaluate, and each dictation names its slot', async () => {
+  const b = stubBuiltin('ready');
+  let primes = null; const slots = [];
+  b.warm = (p) => { primes = p; return true; };
+  const sent = [];
+  const origChat = b.chat; b.chat = (system, user, o) => { slots.push(o && o.slot); sent.push(system); return origChat(system, user, o); };
+  llm._setBuiltinForTest(b);
+  const cfgC = { cleanup: Object.assign({}, NO_OLLAMA, { customInstructions: 'Prefer British spelling.' }) };
+  const dict = [{ word: 'Bol' }];
+  const w = await cleanup.warm(cfgC, { dictionary: dict, snippets: [] });
+  assert.strictEqual(w.engine, 'builtin');
+  assert.deepStrictEqual(primes.map((p) => p.slot), ['concise', 'clean']);
+  // The primed prompts must be BYTE-IDENTICAL to what dictations send, whatever
+  // app they are dictated into, or the saved state is never reused.
+  await cleanup.polish(RAMBLE, { cfg: cfgC, app: 'notepad', title: 'notes.txt', dictionary: dict, snippets: [], customInstructions: 'Prefer British spelling.' });
+  await cleanup.polish('send the report today please', { cfg: cfgC, app: 'slack', title: 'general', dictionary: dict, snippets: [], customInstructions: 'Prefer British spelling.' });
+  assert.deepStrictEqual(slots, ['concise', 'clean']);
+  assert.strictEqual(sent[0], primes[0].system, 'concise prompt sent != primed');
+  assert.strictEqual(sent[1], primes[1].system, 'clean prompt sent != primed');
+  assert(!/notepad|slack/.test(sent.join('\n')), 'the app name must not reach the built-in engine prompt');
+  assert(/Prefer British spelling/.test(primes[0].system) && /Bol/.test(primes[0].system));
+});
+ta('the shipped model descriptor is complete: pinned hash and size, free licence, a GGUF on the hub', async () => {
+  const M = require('../src/main/builtinLlm').MODEL;
+  assert(/^[0-9a-f]{64}$/.test(M.sha256), 'sha256 must be pinned: ' + M.sha256);
+  assert(Number.isInteger(M.size) && M.size > 500 * 1048576, 'size must be the real byte count, got ' + M.size);
+  assert(/^[\w.-]+\/[\w.-]+$/.test(M.repo) && /\.gguf$/i.test(M.file), M.repo + '/' + M.file);
+  assert(['Apache-2.0', 'MIT'].includes(M.license), 'only freely redistributable licences ship: ' + M.license);
+});
+ta('a cloud provider is never silently swapped for the built-in engine', async () => {
+  const b = stubBuiltin('ready'); llm._setBuiltinForTest(b);
+  await assert.rejects(llm.chat({ provider: 'openai', openaiKey: '' }, 's', 'u', {}), /No API key/);
+  assert.deepStrictEqual(b.calls, []);
+});
+
+(async () => {
+  for (const [name, fn] of asyncTests) {
+    try { await fn(); pass++; console.log('  ok', name); }
+    catch (e) { fail++; console.error('  FAIL', name, '-', e.message); }
+  }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();

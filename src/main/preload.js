@@ -8,10 +8,10 @@ const INVOKE = new Set([
   'history:list', 'history:delete', 'history:clear',
   'dict:list', 'dict:add', 'dict:remove', 'dict:suggest',
   'snippets:list', 'snippets:add', 'snippets:remove',
-  'analytics:get', 'app:version', 'test:stt', 'test:cleanup', 'insert:text',
+  'analytics:get', 'app:version', 'test:stt', 'test:cleanup', 'cleanup:status', 'insert:text',
 ]);
 const SEND = new Set(['audio:chunk', 'audio:level', 'audio:error', 'audio:silent', 'mic:devices', 'mic:picked', 'mic:stale', 'hud:cancel']);
-const ON = new Set(['hud:state', 'settings:changed', 'rec:start', 'rec:stop', 'mic:enumerate', 'mic:reprobe']);
+const ON = new Set(['hud:state', 'settings:changed', 'cleanup:status', 'rec:start', 'rec:stop', 'mic:enumerate', 'mic:reprobe']);
 
 contextBridge.exposeInMainWorld('bol', {
   invoke: (ch, payload) => INVOKE.has(ch) ? ipcRenderer.invoke(ch, payload) : Promise.reject(new Error('blocked channel: ' + ch)),

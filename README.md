@@ -9,7 +9,7 @@ Wispr-Flow-class, but yours: **100% free, zero API keys, zero subscription, zero
 Out of the box Bol needs **no API keys and no signup**:
 
 - **Speech-to-text:** **local Whisper** on your PC — 8-bit `whisper-small`, a ~250 MB one-time download, then fully offline. It loads at startup, not in the middle of your first dictation.
-- **AI cleanup:** your **local Ollama** if you have it. Bol picks whichever chat model you already have installed and **starts Ollama itself** if it is installed but not running. No Ollama? An instant **offline regex cleaner** takes over. Either way, $0.
+- **AI cleanup, built in:** Bol ships its own AI engine (llama.cpp, loaded inside the app) and downloads one model, **Qwen3.5 4B**, the first time it starts (about 2.7 GB, once). It runs on your GPU (NVIDIA, AMD or Intel, through Vulkan) or on the CPU if there is none. **Nothing else to install.** If you already have **Ollama**, Bol uses it instead, picks your best installed model and starts Ollama itself when it is idle. Until the model has downloaded, an instant offline cleaner does the basics. Either way, $0.
 - **Roman Urdu / Hindi / Hinglish** is auto-routed to the offline cleaner so it's **never translated** — it comes out exactly as you spoke it.
 
 Want more speed/quality? Optional **free-tier cloud** (Groq for STT + cleanup) or paid providers (Deepgram, Anthropic) are a dropdown away — but never required.
@@ -56,8 +56,9 @@ Windows SmartScreen will also say "unknown publisher" → **More info → Run an
 
 | Engine | Type | Notes |
 |---|---|---|
-| **Ollama** (default) | local LLM | **free, no key**, runs on your PC. Bol auto-detects your best installed model and starts Ollama if it is idle |
-| **Offline cleaner** | regex | automatic fallback if Ollama isn't running — zero deps, instant |
+| **Ollama** (default when installed) | local LLM | **free, no key**, runs on your PC. Bol auto-detects your best installed model and starts Ollama if it is idle |
+| **Built-in** (default without Ollama) | local LLM inside Bol | **free, no key, nothing to install**. Qwen3.5 4B through llama.cpp; GPU via Vulkan, else CPU |
+| **Offline cleaner** | regex | instant fallback while the built-in model downloads, or if no AI engine can run |
 | **Free cloud** | OpenAI-compatible | Groq (free tier) or Gemini / OpenAI (needs that free/paid key) |
 | **Anthropic** | Claude | optional, paid — not required |
 
@@ -72,7 +73,7 @@ npm start
 
 First run opens the onboarding wizard — with the defaults you just click through it (no keys). Then Bol lives in the tray.
 
-For the best free cleanup, install [Ollama](https://ollama.com) and pull any chat model (`ollama pull qwen2.5:7b`). Bol finds whichever model you have and starts the server itself when it is idle. If Ollama isn't installed at all, the offline cleaner takes over automatically.
+AI cleanup works out of the box: on first start Bol downloads its built-in model in the background (Settings shows the progress). If you already run [Ollama](https://ollama.com), Bol uses your best installed model instead.
 
 ```
 npm test         # unit tests
@@ -96,3 +97,9 @@ Text injection via a persistent PowerShell helper (`SendInput` + clipboard swap)
 `uiohook-napi` (keydown/keyup push-to-talk). See `CONTRACTS.md` for every module interface.
 
 All data is local JSON in `%APPDATA%/bol` — yours to read, export, or delete.
+
+## Third-party components
+
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) through [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) (MIT): the built-in AI engine.
+- [Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (Apache-2.0), GGUF build by [unsloth](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF): the built-in cleanup model, downloaded on first run and checked against its published SHA256.
+- [Whisper](https://github.com/openai/whisper) (MIT) through [transformers.js](https://github.com/huggingface/transformers.js) (Apache-2.0): on-device speech recognition.

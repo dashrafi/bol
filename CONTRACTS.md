@@ -110,6 +110,18 @@ Register into `window.BolPages`. `history.js`: search box (debounced `history:li
 
 ---
 
+## Built-in AI (no Ollama needed) — `src/main/builtinLlm.js` + `builtinLlmWorker.js`
+
+Engine order for cleanup provider `ollama` (the default): **Ollama** if installed and it has a chat model (auto-started when idle) → **built-in** model → offline regex cleaner. Provider `builtin` skips Ollama. Cloud providers never fall through to the built-in engine.
+
+- `builtinLlm.js` (main): forks the worker in an Electron `utilityProcess` (plain `child_process.fork` when `BOL_BUILTIN_IN_NODE=1`, for test scripts). API: `warm()`, `chat(system, user, {maxTokens, timeoutMs})` → `{text, device, ms}` (rejects fast with `code: BUILTIN_NOT_READY` while the model is still downloading), `getStatus()` → `{state: idle|downloading|loading|ready|error, pct?, device: gpu|cpu, model, label}`, `onStatus(cb)`, `MODEL`.
+- `builtinLlmWorker.js`: downloads the GGUF to `userData/models/gguf/` (resumable `.part`, huggingface.co then hf-mirror.com, refused unless the SHA256 matches `MODEL.sha256`), loads it **in-process** with node-llama-cpp (llama.cpp): Vulkan GPU first, CPU fallback (`BOL_LLM_DEVICE=cpu` forces CPU). A new `LlamaChatSession` per dictation on one reused context sequence, so the long system prompt is evaluated once and reused. Thinking disabled (`budgets.thoughtTokens: 0`). Unloads after 30 min idle.
+- **Why in-process:** a bundled `llama-server.exe` was deleted by Avast mid-run (2026-10-18); DLLs loaded by Bol were left alone.
+- **Model:** `unsloth/Qwen3.5-4B-GGUF` `Qwen3.5-4B-Q4_K_M.gguf` (2,740,937,888 bytes, Apache-2.0). Chosen with `test/bench-nlc.js` + `test/score-cleanup.js` over 27 real dictations + 8 adversarial cases: 7/7 adversarial (Qwen2.5-1.5B answered a dictated question and wrote the requested poem; Qwen3.5-2B barely edited), quality level with qwen2.5:7b. Qwen2.5-3B was excluded: its licence forbids commercial use.
+- **IPC:** `cleanup:status` (invoke) → `llm.engineStatus()`; `cleanup:status` (main→renderer) streams built-in download/load progress to Settings. History records `engine` (e.g. `builtin:qwen3.5-4b-q4_k_m`). A dictation made while the model downloads gets the offline cleaner and a HUD note (`reason: ai-downloading`).
+- **Packaging:** `node_modules/node-llama-cpp/**` and `node_modules/@node-llama-cpp/**` are asarUnpacked; only the `win-x64` (CPU) and `win-x64-vulkan` builds ship (CUDA, ARM and the 35 MB llama.cpp source bundle are excluded).
+- **Diagnostics:** `Bol.exe --polish <file.txt> --wait-ai` runs text through the real engine choice (waiting for the built-in download) and prints which engine answered. `node test/e2e-builtin.js <corpus.json>` does the same from source with Ollama unreachable.
+
 ## Testing hooks
 - Every main-process module must `node --check` clean.
 - `test/unit.js` (owned by integrator): requires cleanup.localCleanup, wav.js, snippets.expandSpoken, analytics math with fixtures — plain asserts, `node test/unit.js`.

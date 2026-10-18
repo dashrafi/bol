@@ -1,6 +1,6 @@
 {
   "name": "bol",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Bol — speak anywhere, it types. System-wide AI dictation for Windows (Wispr Flow class): push-to-talk, AI cleanup, tones, dictionary, snippets, command mode, local/offline mode.",
   "main": "src/main/index.js",
   "author": "Danish",
@@ -44,13 +44,21 @@
       "!node_modules/@huggingface/transformers/dist/transformers.web.*",
       "!node_modules/@huggingface/transformers/dist/transformers.js",
       "!node_modules/@huggingface/transformers/dist/transformers.min.js",
-      "!node_modules/@huggingface/transformers/dist/*.wasm"
+      "!node_modules/@huggingface/transformers/dist/*.wasm",
+      "!vendor/**",
+      "!node_modules/@node-llama-cpp/win-x64-cuda/**",
+      "!node_modules/@node-llama-cpp/win-x64-cuda-ext/**",
+      "!node_modules/@node-llama-cpp/win-arm64/**",
+      "!node_modules/@node-llama-cpp/**/*.lib",
+      "!node_modules/node-llama-cpp/llama/gitRelease.bundle"
     ],
     "asarUnpack": [
       "**/*.node",
       "src/main/helper/**",
       "node_modules/@huggingface/transformers/**",
-      "node_modules/onnxruntime-node/**"
+      "node_modules/onnxruntime-node/**",
+      "node_modules/node-llama-cpp/**",
+      "node_modules/@node-llama-cpp/**"
     ],
     "win": {
       "target": "nsis",
@@ -66,6 +74,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.5.2",
+    "node-llama-cpp": "^3.22.2",
     "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {

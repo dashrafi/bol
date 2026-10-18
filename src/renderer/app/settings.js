@@ -13,6 +13,22 @@
   }
   function toast(m, k) { if (window.bolToast) window.bolToast(m, k); }
 
+  var enginePainter = null;
+  function engineText(st) {
+    if (!st) return '';
+    if (st.engine === 'ollama') return st.state === 'starting' ? 'AI engine: Ollama (starting…)' : 'AI engine: Ollama' + (st.model ? ' · ' + st.model : '') + ' · on this PC';
+    if (st.engine === 'builtin') {
+      if (st.state === 'downloading') return 'AI engine: built-in · downloading once' + (st.pct != null ? ' (' + st.pct + '%)' : '') + ' · basic cleanup until it finishes';
+      if (st.state === 'error') return 'AI engine: built-in · could not load, basic cleanup is used (' + (st.error || 'error') + ')';
+      if (st.state === 'loading') return 'AI engine: built-in · loading…';
+      return 'AI engine: built-in' + (st.label ? ' (' + st.label + ')' : '') + (st.device ? ' · ' + (st.device === 'dml' ? 'GPU' : 'CPU') : '') + ' · nothing to install';
+    }
+    if (st.engine === 'anthropic') return 'AI engine: Anthropic' + (st.model ? ' · ' + st.model : '');
+    if (st.engine === 'cloud') return 'AI engine: cloud' + (st.model ? ' · ' + st.model : '');
+    return '';
+  }
+  if (window.bol && window.bol.on) window.bol.on('cleanup:status', function (st) { if (enginePainter) enginePainter(st); });
+
   // patch({section:{key:val}}) -> persist + local mirror
   var saveTimer = null;
   function patch(p, quiet) {
@@ -55,6 +71,7 @@
       '.st-sec{background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:22px 24px;margin:0 0 18px}',
       '.st-sec h2{font-size:15px;font-weight:700;margin:0 0 3px;color:#fff;letter-spacing:-.01em}',
       '.st-sec .st-desc{color:#8d93b4;font-size:12.5px;margin:0 0 18px;line-height:1.5}',
+      '.st-sec .st-desc.st-engine{margin:-6px 0 14px;color:#9fa6cc}',
       '.st-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 0;border-top:1px solid rgba(255,255,255,.06)}',
       '.st-row:first-of-type{border-top:0}',
       '.st-row .l{font-size:13.5px;font-weight:600;color:#dfe2f5}',
@@ -205,6 +222,7 @@
       var provCards = h('div', { class: 'st-cards' });
       [
         { v: 'ollama', n: 'Ollama (local)', d: 'Free · no key · offline · private' },
+        { v: 'builtin', n: 'Built-in', d: 'Nothing to install · runs inside Bol' },
         { v: 'openai', n: 'Free cloud', d: 'Groq/Gemini/OpenAI-compatible' },
         { v: 'anthropic', n: 'Anthropic', d: 'Claude · optional · paid key' },
       ].forEach(function (pr) {
@@ -218,7 +236,7 @@
 
       var prov = cfg.cleanup.provider || 'ollama';
       if (prov === 'ollama') {
-        sec.appendChild(h('div', { class: 'st-desc', text: 'Uses your local Ollama (install from ollama.com, then: ollama pull qwen2.5:3b). Nothing leaves your PC. Best for English; Roman Urdu/Hinglish auto-uses the offline cleaner so it’s never translated.' }));
+        sec.appendChild(h('div', { class: 'st-desc', text: 'Uses your local Ollama if it is installed (ollama.com), picking your best model, and starts it when needed. No Ollama? Bol uses its built-in AI automatically. Nothing leaves your PC.' }));
         sec.appendChild(field('Ollama URL', input(cfg.cleanup.ollamaUrl, 'http://127.0.0.1:11434', function (v) { patch({ cleanup: { ollamaUrl: v } }, true); })));
         sec.appendChild(field('Model', input(cfg.cleanup.ollamaModel, 'qwen2.5:3b', function (v) { patch({ cleanup: { ollamaModel: v } }, true); })));
       } else if (prov === 'openai') {
@@ -226,6 +244,8 @@
         sec.appendChild(field('API key', input(cfg.cleanup.openaiKey, 'gsk_… (Groq) or sk-…', function (v) { patch({ cleanup: { openaiKey: v } }, true); }, 'password')));
         sec.appendChild(field('Base URL', input(cfg.cleanup.openaiBaseUrl, 'https://api.groq.com/openai/v1', function (v) { patch({ cleanup: { openaiBaseUrl: v } }, true); })));
         sec.appendChild(field('Model', input(cfg.cleanup.openaiModel, 'llama-3.3-70b-versatile', function (v) { patch({ cleanup: { openaiModel: v } }, true); })));
+      } else if (prov === 'builtin') {
+        sec.appendChild(h('div', { class: 'st-desc', text: 'An AI model that runs inside Bol (Qwen3.5 4B): downloads once (about 2.7 GB) the first time Bol starts, then works offline on your GPU, or your CPU if there is none. Used automatically when Ollama is not installed.' }));
       } else {
         sec.appendChild(h('div', { class: 'st-desc', text: 'Optional — a paid Anthropic key. Not required; Ollama and Groq are free.' }));
         sec.appendChild(field('Anthropic API key', input(cfg.cleanup.anthropicKey, 'sk-ant-…', function (v) { patch({ cleanup: { anthropicKey: v } }, true); }, 'password')));
@@ -486,6 +506,13 @@
     // 4. Tidy up my words (hides provider/model/tone plumbing)
     sec.appendChild(row('Tidy up my words', 'Removes “um”, fixes punctuation and capitalisation. Roman Urdu / Hinglish is never translated.',
       toggle((cfg.cleanup.mode || 'full') !== 'off', function (v) { patch({ cleanup: { mode: v ? 'full' : 'off' } }); })));
+
+    // 4a. Which AI does the tidy-up on this PC. A friend without Ollama sees the
+    // built-in engine and its one-time download, instead of silently getting less.
+    var engineLine = h('div', { class: 'st-desc st-engine', text: 'Checking AI engine…' });
+    sec.appendChild(engineLine);
+    enginePainter = function (st) { engineLine.textContent = engineText(st); };
+    invoke('cleanup:status').then(function (st) { if (enginePainter) enginePainter(st); }, function () {});
 
     // 4b. How much to tidy — concise is the point of Bol; clean keeps your wording
     sec.appendChild(row('How much to tidy', 'Concise removes “so yeah”, repeats and rambling but keeps every point you made. Clean only fixes fillers and punctuation.',

@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+let builtin = require('./builtinLlm');
 
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -51,6 +52,9 @@ function endpointFor(c) {
       local: false,
       label: 'Cloud AI',
     };
+  }
+  if (provider === 'builtin') {
+    return { kind: 'builtin', url: '', key: '', model: builtin.MODEL.id, local: true, label: 'Built-in AI' };
   }
   // ollama (default): strip any trailing slash or /v1 the user pasted, re-add /v1.
   const base = String(cc.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '').replace(/\/v1$/, '');
@@ -147,7 +151,8 @@ let lastStartResult = { exe: null, started: false };
 // ourselves, detached and hidden, so "Tidy up my words" just works. Only ever
 // touches a loopback address. Resolves true when the server answers.
 async function ensureOllama(base) {
-  if (!isLoopback(base)) return reachable(base, 2000);
+  // Tests must never launch the real Ollama on the machine running them.
+  if (!isLoopback(base) || process.env.BOL_NO_OLLAMA_AUTOSTART === '1') return reachable(base, 2000);
   if (await reachable(base, 1200)) return true;
   if (startPromise) return startPromise;
   const now = Date.now();
@@ -194,12 +199,16 @@ let warmed = { base: null, model: null, at: 0 };
 // Load the cleanup model into memory before it is needed (called on hotkey-down,
 // so the load overlaps with the user speaking). Never throws; resolves to
 // { ok, model? }. Throttled: at most once a minute per model.
-async function warm(c) {
+// primes: system prompts the built-in engine should evaluate once it has loaded.
+async function warm(c, primes) {
   const ep = endpointFor(c);
   if (!ep.local) return { ok: false, reason: 'not-local' };
+  if (ep.kind === 'builtin') return { ok: builtin.warm(primes), engine: 'builtin', model: builtin.MODEL.id };
   try {
-    if (!(await ensureOllama(ep.base))) return { ok: false, reason: 'unreachable' };
-    const model = (!ep.model || ep.model === 'auto') ? await resolveOllamaModel(ep.base) : ep.model;
+    const model = await ollamaModelOrNull(ep);
+    // No Ollama on this PC: get the built-in model ready instead (on a fresh
+    // install this is what starts its one-time download, in the background).
+    if (!model) return builtin.available() ? { ok: builtin.warm(primes), engine: 'builtin', model: builtin.MODEL.id } : { ok: false, reason: 'unreachable' };
     const now = Date.now();
     if (warmed.base === ep.base && warmed.model === model && (now - warmed.at) < 60000) return { ok: true, model, cached: true };
     warmed = { base: ep.base, model, at: now };
@@ -235,15 +244,41 @@ function stripThink(s) {
 }
 
 // chat(cleanupCfg, systemPrompt, userText, {maxTokens, timeoutMs}) -> Promise<string>
+// The built-in engine (a small model inside Bol, no install) — used directly
+// when chosen, and automatically when Ollama is missing, so a fresh install on a
+// friend's PC still gets AI tidy-up.
+async function builtinChat(system, user, maxTokens, timeoutMs, meta, slot) {
+  const r = await builtin.chat(system, user, { maxTokens, timeoutMs, slot });
+  if (meta) { meta.engine = 'builtin'; meta.model = builtin.MODEL.id; meta.device = r.device; }
+  return stripThink(r.text);
+}
+
+// Ollama if it is installed and has a chat model, else null.
+async function ollamaModelOrNull(ep) {
+  if (!(await ensureOllama(ep.base))) return null;
+  if (ep.model && ep.model !== 'auto') return ep.model;
+  try { return await resolveOllamaModel(ep.base); } catch (e) { return null; }
+}
+
 async function chat(c, system, user, opts) {
   const ep = endpointFor(c);
   const maxTokens = (opts && opts.maxTokens) || 1024;
   const timeoutMs = (opts && opts.timeoutMs) || (ep.local ? 15000 : 8000);
+  const meta = (opts && opts.meta) || null;
 
+  const slot = opts && opts.slot;
+  // The built-in engine wants the app-independent prompt (see cleanup.polish).
+  const builtinSystem = (opts && opts.stableSystem) || system;
+  if (ep.kind === 'builtin') return builtinChat(builtinSystem, user, maxTokens, timeoutMs, meta, slot);
   if (ep.local) {
-    if (!(await ensureOllama(ep.base))) throw new Error(ollamaUnavailableMessage(ep.base));
-    if (!ep.model || ep.model === 'auto') ep.model = await resolveOllamaModel(ep.base);
-  }
+    const model = await ollamaModelOrNull(ep);
+    if (!model) {
+      if (builtin.available()) return builtinChat(builtinSystem, user, maxTokens, timeoutMs, meta, slot);
+      throw new Error(ollamaUnavailableMessage(ep.base));
+    }
+    ep.model = model;
+    if (meta) { meta.engine = 'ollama'; meta.model = model; }
+  } else if (meta) { meta.engine = ep.kind === 'anthropic' ? 'anthropic' : 'cloud'; meta.model = ep.model; }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -307,14 +342,32 @@ async function chat(c, system, user, opts) {
 async function test(c) {
   const ep = endpointFor(c);
   try {
-    await chat(c, 'Reply with exactly: ok', 'ping', { maxTokens: 5, timeoutMs: ep.local ? 20000 : 8000 });
-    // report the model actually used, not the literal 'auto'
-    let model = ep.model;
-    if (ep.local && (!model || model === 'auto')) { try { model = await resolveOllamaModel(ep.base); } catch (_) {} }
-    return { ok: true, provider: (c && c.provider) || 'ollama', model };
+    const meta = {};
+    await chat(c, 'Reply with exactly: ok', 'ping', { maxTokens: 5, timeoutMs: ep.local ? 30000 : 8000, meta });
+    return { ok: true, provider: (c && c.provider) || 'ollama', engine: meta.engine, model: meta.model || ep.model };
   } catch (e) {
     return { ok: false, error: (e && e.message) ? e.message : 'AI test failed' };
   }
 }
 
-module.exports = { chat, test, warm, endpointFor, pickBestModel, findOllamaExe, isLoopback, stripThink, ensureOllama };
+// Which engine "Tidy up my words" is using right now, for Settings. Does not
+// start anything. -> { engine: 'ollama'|'builtin'|'cloud'|'anthropic', model?, state?, pct?, device? }
+async function engineStatus(c) {
+  const ep = endpointFor(c);
+  if (!ep.local) return { engine: ep.kind === 'anthropic' ? 'anthropic' : 'cloud', model: ep.model };
+  if (ep.kind !== 'builtin') {
+    if (await reachable(ep.base, 1200)) {
+      let model = ep.model;
+      if (!model || model === 'auto') { try { model = await resolveOllamaModel(ep.base); } catch (e) { model = null; } }
+      if (model) return { engine: 'ollama', model };
+    } else if (isLoopback(ep.base) && findOllamaExe()) {
+      return { engine: 'ollama', model: ep.model, state: 'starting' };
+    }
+  }
+  return Object.assign({ engine: 'builtin' }, builtin.getStatus());
+}
+
+// Test seam: swap the built-in engine for a stub (unit tests only).
+function _setBuiltinForTest(b) { builtin = b; }
+
+module.exports = { _setBuiltinForTest, chat, test, warm, engineStatus, endpointFor, pickBestModel, findOllamaExe, isLoopback, stripThink, ensureOllama };

@@ -19,6 +19,8 @@ const commandMode = require('./commandMode');
 const snippets = require('./snippets');
 const tray = require('./tray');
 const pttMode = require('./pttMode');
+const llm = require('./llm');
+const builtinLlm = require('./builtinLlm');
 
 // ---------- state ----------
 const S = { IDLE: 'idle', LISTENING: 'listening', FINALIZING: 'finalizing', POLISHING: 'polishing', INSERTING: 'inserting' };
@@ -51,7 +53,7 @@ function warmModels(reason) {
   const cfg = effectiveConfig();
   try { stt.warm(cfg); } catch (e) { log('stt warm failed', e.message); }
   Promise.resolve()
-    .then(() => cleanup.warm(cfg))
+    .then(() => cleanup.warm(cfg, { dictionary: store.dictionary.list(), snippets: store.snippets.list() }))
     .then((r) => { if (r && r.ok && !r.cached) log('cleanup model warm (' + reason + '):', r.model); },
           (e) => log('cleanup warm failed', e && e.message));
 }
@@ -334,7 +336,7 @@ async function onFinal(sess, raw) {
     if (!inserted) { try { clipboard.writeText(text); } catch (e) { log('clipboard write failed', e.message); } }
 
     if (config.get().privacy.storeHistory) {
-      store.history.add({ raw, polished: text, app: ctx.app, title: ctx.title, durationMs, provider: cfg.stt.provider, cleanup: cleanupLabel(polished), inserted });
+      store.history.add({ raw, polished: text, app: ctx.app, title: ctx.title, durationMs, provider: cfg.stt.provider, cleanup: cleanupLabel(polished), engine: polished.engine ? polished.engine + (polished.engineModel ? ':' + polished.engineModel : '') : '', inserted });
     }
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     analytics.record({ words: wordCount, durationMs, app: ctx.app });
@@ -354,6 +356,14 @@ async function onFinal(sess, raw) {
     // if the user was already warned during the recording.
     const secs = durationMs / 1000;
     const sparse = secs > 5 && (wordCount / secs) < 0.8;
+    // First days on a PC without Ollama: the built-in model is still downloading,
+    // so this dictation only got the basic cleanup. Say so instead of looking broken.
+    if (polished.reason === 'ai-downloading') {
+      const st = builtinLlm.getStatus();
+      hudSend({ state: 'error', message: 'AI tidy-up is still downloading' + (st.pct != null ? ' (' + st.pct + '%)' : '') + ' — basic cleanup used this time' });
+      setTimeout(() => hudSend({ state: 'idle' }), 3500);
+      return;
+    }
     if (sparse && !ctx.warned) {
       log('sparse-speech note: words/s =', (wordCount / secs).toFixed(2), 'maxLevel =', (ctx.maxLevel || 0).toFixed(3));
       hudSend({ state: 'error', message: 'Only caught part of that — try speaking a little closer' });
@@ -474,6 +484,9 @@ function registerIpc() {
   ipcMain.handle('app:version', () => app.getVersion());
 
   ipcMain.handle('test:stt', () => stt.test(effectiveConfig()).catch(e => ({ ok: false, error: e.message })));
+  // Which engine 'Tidy up my words' is using (Ollama / built-in / cloud) and,
+  // for the built-in one, its download progress. Shown in Settings.
+  ipcMain.handle('cleanup:status', () => llm.engineStatus(effectiveConfig().cleanup).catch((e) => ({ engine: 'unknown', error: e.message })));
   ipcMain.handle('test:cleanup', () => cleanup.test(config.get()).catch(e => ({ ok: false, error: e.message })));
 
   // From the dashboard the target app isn't focused — put it on the clipboard instead.
@@ -575,6 +588,7 @@ if (!gotLock) { app.quit(); } else {
     });
 
     config.onChange(() => broadcast('settings:changed', config.get()));
+    builtinLlm.onStatus((st) => broadcast('cleanup:status', Object.assign({ engine: 'builtin' }, builtinLlm.getStatus(), st)));
 
     // Warm both models shortly after boot: on a fresh install this is what pulls
     // the Whisper model down in the background instead of inside the user's
@@ -584,6 +598,41 @@ if (!gotLock) { app.quit(); } else {
     if (SMOKE) {
       const mods = Object.entries(bootReport).map(([k, v]) => `${k}=${v}`).join(' ');
       setTimeout(() => { console.log(`SMOKE OK modules: ${mods} state=${state}`); quitting = true; app.exit(0); }, 2500);
+      return;
+    }
+
+    // Diagnostic: `Bol.exe --polish <file.txt> [--wait-ai]` runs the text through
+    // the REAL tidy-up (same engine choice as a dictation) and prints the result
+    // and which engine answered. With --wait-ai it first waits for the built-in
+    // model to download and load, which is how a fresh install on a PC without
+    // Ollama is proven to work end to end.
+    const plIdx = process.argv.indexOf('--polish');
+    if (plIdx !== -1) {
+      const done = (code) => { quitting = true; app.exit(code); };
+      (async () => {
+        const text = require('fs').readFileSync(process.argv[plIdx + 1], 'utf8').replace(/^\ufeff/, '').trim();
+        const cfg = effectiveConfig();
+        if (process.argv.includes('--wait-ai')) {
+          const w = await cleanup.warm(cfg, { dictionary: store.dictionary.list(), snippets: store.snippets.list() });
+          console.log('POLISH warm ' + JSON.stringify(w));
+          if (w && w.engine === 'builtin') {
+            const t0 = Date.now(); let last = '';
+            for (;;) {
+              const st = builtinLlm.getStatus();
+              const line = st.state + (st.pct != null ? ' ' + st.pct + '%' : '') + (st.device ? ' ' + st.device : '');
+              if (line !== last) { console.log('POLISH builtin ' + line + ' t=' + Math.round((Date.now() - t0) / 1000) + 's'); last = line; }
+              if (st.state === 'ready' || st.state === 'error') break;
+              if (Date.now() - t0 > 60 * 60 * 1000) { console.log('POLISH gave up waiting'); break; }
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          }
+        }
+        const t1 = Date.now();
+        const r = await cleanup.polish(text, { cfg, app: 'notepad', title: '', dictionary: store.dictionary.list(), snippets: store.snippets.list(), customInstructions: cfg.cleanup.customInstructions });
+        console.log('POLISH ' + (Date.now() - t1) + 'ms usedAI=' + r.usedAI + ' engine=' + (r.engine || '-') + (r.engineModel ? ':' + r.engineModel : '') + ' style=' + (r.style || '-') + ' reason=' + (r.reason || '-') + ' rss=' + Math.round(process.memoryUsage().rss / 1048576) + 'MB');
+        console.log('TEXT: ' + r.text);
+        done(0);
+      })().catch((e) => { console.error('POLISH FAIL ' + (e && e.message)); done(1); });
       return;
     }
 
